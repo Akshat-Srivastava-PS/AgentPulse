@@ -13,6 +13,8 @@ AgentPulse is the ground-truth layer built for those callers:
 - **Push, not poll.** Signed webhooks and a live SSE stream deliver incidents and changes the moment they're recorded.
 - **Built for bots, priced in tokens.** Zero-CAPTCHA programmatic onboarding, an MCP server for IDE agents, an `llms.txt` discovery document, and a *Good Citizen Protocol* that rewards ETag caching with higher quotas.
 
+> **Get it:** Live MCP endpoint — `https://agentpulse-43di.onrender.com/mcp` · Agent discovery — https://agentpulse-43di.onrender.com/llms.txt · Registry metadata — [`server.json`](server.json)
+
 A status answer looks like this (illustrative example — live answers carry only real ingested data):
 
 ```json
@@ -170,7 +172,7 @@ Subscribe a URL once; AgentPulse POSTs signed events as they happen: `incident.c
 {
   "mcpServers": {
     "agentpulse": {
-      "url": "https://agentpulse.onrender.com/mcp",
+      "url": "https://agentpulse-43di.onrender.com/mcp",
       "headers": { "Authorization": "Bearer agp_live_your_api_key_here" }
     }
   }
@@ -180,7 +182,7 @@ Subscribe a URL once; AgentPulse POSTs signed events as they happen: `incident.c
 **Claude Code:**
 
 ```bash
-claude mcp add agentpulse https://agentpulse.onrender.com/mcp \
+claude mcp add agentpulse https://agentpulse-43di.onrender.com/mcp \
   --header "Authorization: Bearer agp_live_your_api_key_here"
 ```
 
@@ -190,7 +192,7 @@ claude mcp add agentpulse https://agentpulse.onrender.com/mcp \
 import { AgentPulseClient, AgentPulseError } from 'agentpulse-sdk';
 
 const client = new AgentPulseClient({
-  baseUrl: 'https://agentpulse.onrender.com',
+  baseUrl: 'https://agentpulse-43di.onrender.com',
   apiKey: process.env.AGENTPULSE_API_KEY,
 });
 

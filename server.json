@@ -1,0 +1,34 @@
+{
+    "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+    "description": "Real-time API status & breaking-change oracle for AI agents",
+    "name": "io.github.Akshat-Srivastava-PS/agentpulse",
+    "remotes": [
+        {
+            "headers": [
+                {
+                    "description": "Optional AgentPulse API key as a Bearer token. Public status tools work without it; identified tools (get_my_impact, report_outage_signal) and higher quota require it. Get a free key via POST /v1/agents/register.",
+                    "isRequired": false,
+                    "isSecret": true,
+                    "name": "Authorization",
+                    "value": "Bearer {api_key}",
+                    "variables": {
+                        "api_key": {
+                            "description": "Your AgentPulse API key (agp_live_...) from POST /v1/agents/register",
+                            "isRequired": false,
+                            "isSecret": true
+                        }
+                    }
+                }
+            ],
+            "type": "streamable-http",
+            "url": "https://agentpulse-43di.onrender.com/mcp"
+        }
+    ],
+    "repository": {
+        "source": "github",
+        "url": "https://github.com/Akshat-Srivastava-PS/AgentPulse"
+    },
+    "title": "AgentPulse",
+    "version": "0.1.0",
+    "websiteUrl": "https://agentpulse-43di.onrender.com"
+}
