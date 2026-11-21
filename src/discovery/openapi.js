@@ -192,6 +192,149 @@ export function generateOpenApiSchema(origin = 'https://agentpulse.dev') {
           }
         }
       },
+      '/v1/agents/me/webhooks': {
+        post: {
+          summary: 'Create a Webhook Subscription',
+          description: 'Registers a webhook for incident and breaking-change alerts (Step 4). Events: `incident.created`, `incident.resolved`, `change.detected` (default: all). `services` optionally restricts delivery to those service slugs (omit/null = all services; set it to your manifest services to get only alerts for your stack). The URL must be https:// — http:// is accepted only for localhost / 127.0.0.1 for development. The response includes the webhook `secret` — shown ONLY in this create response — used to verify the `X-AgentPulse-Signature: sha256=<HMAC-SHA256 hex of the raw request body, keyed with the secret>` header sent with every delivery. Deliveries are POSTed JSON `{ id, type, created_at, data }` with `X-AgentPulse-Event` and `X-AgentPulse-Delivery` headers, a 5s timeout, and up to 3 attempts (backoff via WEBHOOK_RETRY_DELAYS_MS). Counts toward the daily quota.',
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    url: { type: 'string', format: 'uri', example: 'https://bots.example.com/agentpulse' },
+                    events: { type: 'array', items: { type: 'string', enum: ['incident.created', 'incident.resolved', 'change.detected'] }, example: ['incident.created', 'change.detected'] },
+                    services: { type: 'array', items: { type: 'string' }, example: ['stripe', 'openai'], description: 'Service slug filter; omit or null for all services.' }
+                  },
+                  required: ['url']
+                }
+              }
+            }
+          },
+          responses: {
+            '201': {
+              description: 'Webhook created; `secret` is present in this response only',
+              headers: RATE_LIMIT_HEADERS,
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      message: { type: 'string' },
+                      webhook: {
+                        type: 'object',
+                        properties: {
+                          id: { type: 'string', example: 'wh_1a2b3c4d5e6f' },
+                          agent_id: { type: 'string' },
+                          url: { type: 'string' },
+                          events: { type: 'array', items: { type: 'string' } },
+                          services: { type: ['array', 'null'], items: { type: 'string' } },
+                          secret: { type: 'string', example: 'whsec_ab12cd34...', description: 'Signing secret — shown only at creation.' },
+                          active: { type: 'boolean' },
+                          created_at: { type: 'string', format: 'date-time' }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            '400': { description: 'Invalid URL (non-https off localhost), unknown event type, or unknown service slug' },
+            '401': { description: 'Missing or invalid API key' },
+            '429': RATE_LIMITED_RESPONSE
+          }
+        },
+        get: {
+          summary: 'List My Webhooks',
+          description: 'Lists the authenticated agent\'s webhook subscriptions. Secrets are never included in list responses.',
+          security: [{ bearerAuth: [] }],
+          responses: {
+            '200': {
+              description: 'The caller\'s webhooks (no secrets)',
+              headers: RATE_LIMIT_HEADERS,
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      agent_id: { type: 'string' },
+                      count: { type: 'integer' },
+                      webhooks: { type: 'array', items: { type: 'object' } }
+                    }
+                  }
+                }
+              }
+            },
+            '401': { description: 'Missing or invalid API key' },
+            '429': RATE_LIMITED_RESPONSE
+          }
+        }
+      },
+      '/v1/agents/me/webhooks/{id}': {
+        delete: {
+          summary: 'Delete a Webhook Subscription',
+          description: 'Deletes one of the authenticated agent\'s webhooks (404 if it does not exist or belongs to another agent). Its delivery log is removed with it. No further deliveries are sent.',
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            { name: 'id', in: 'path', required: true, schema: { type: 'string', example: 'wh_1a2b3c4d5e6f' } }
+          ],
+          responses: {
+            '200': { description: 'Webhook deleted', headers: RATE_LIMIT_HEADERS },
+            '401': { description: 'Missing or invalid API key' },
+            '404': { description: 'No such webhook for this agent' },
+            '429': RATE_LIMITED_RESPONSE
+          }
+        }
+      },
+      '/v1/agents/me/webhooks/{id}/deliveries': {
+        get: {
+          summary: 'Webhook Delivery Log',
+          description: 'Returns the 20 most recent delivery attempts for one of the authenticated agent\'s webhooks: status (pending/delivered/failed), attempt count, last HTTP status code, and last error.',
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            { name: 'id', in: 'path', required: true, schema: { type: 'string', example: 'wh_1a2b3c4d5e6f' } }
+          ],
+          responses: {
+            '200': {
+              description: 'Recent deliveries for the webhook',
+              headers: RATE_LIMIT_HEADERS,
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      webhook_id: { type: 'string' },
+                      count: { type: 'integer' },
+                      deliveries: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            id: { type: 'string' },
+                            webhook_id: { type: 'string' },
+                            event_type: { type: 'string', enum: ['incident.created', 'incident.resolved', 'change.detected'] },
+                            status: { type: 'string', enum: ['pending', 'delivered', 'failed'] },
+                            attempts: { type: 'integer' },
+                            last_status_code: { type: ['integer', 'null'] },
+                            last_error: { type: ['string', 'null'] },
+                            created_at: { type: 'string', format: 'date-time' },
+                            delivered_at: { type: ['string', 'null'], format: 'date-time' }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            '401': { description: 'Missing or invalid API key' },
+            '404': { description: 'No such webhook for this agent' },
+            '429': RATE_LIMITED_RESPONSE
+          }
+        }
+      },
       '/v1/status/{service}': {
         get: {
           summary: 'Single Service Status & Incident Query',

@@ -93,6 +93,10 @@ flowchart TD
 | **MCP Tool** | `report_outage_signal` | MCP tool allowing agents to crowdsource observed 5xx spikes to detect early outages. Requires the caller's API key since Step 3. |
 | **Telemetry** | `POST /v1/telemetry/report` | REST crowdsourced outage signal. API key required since Step 3 (401 anonymously); counts toward daily quota. |
 | **Probe Trigger** | `POST /v1/synthetic/probe` | Manually runs one synthetic health probe. API key required since Step 3; counts toward daily quota. |
+| **Webhooks** | `POST /v1/agents/me/webhooks` | Creates a webhook subscription (`incident.created` / `incident.resolved` / `change.detected`, optional service filter). The signing secret is returned only in this response. |
+| **Webhooks** | `GET /v1/agents/me/webhooks` | Lists the caller's webhooks (never includes secrets). |
+| **Webhooks** | `DELETE /v1/agents/me/webhooks/{id}` | Deletes one of the caller's webhooks and its delivery log. |
+| **Webhooks** | `GET /v1/agents/me/webhooks/{id}/deliveries` | Last 20 delivery attempts for a webhook (status, attempts, last HTTP status / error). |
 
 ---
 
@@ -151,7 +155,7 @@ Visit **`http://localhost:3000`** in your browser to open the Cyber-Terminal Web
 ```bash
 npm test
 ```
-Runs 33 automated unit and integration tests across the entire HTTP API, MCP tools, ETag caching, Good Citizen score tracking, token budgets, the Step 1 ingestion workers (spec-diff classification and Statuspage mapping, fully offline against fixtures), the Step 2 dependency manifests (round-trip, validation, auth, preflight impact verdicts, `scope=mine` filtering, MCP `get_my_impact`), and Step 3 quota enforcement & auth hardening (429 + `Retry-After`, 304 quota exemption, write authentication, demo-key removal, rate-limit headers, MCP quota).
+Runs 39 automated unit and integration tests across the entire HTTP API, MCP tools, ETag caching, Good Citizen score tracking, token budgets, the Step 1 ingestion workers (spec-diff classification and Statuspage mapping, fully offline against fixtures), the Step 2 dependency manifests (round-trip, validation, auth, preflight impact verdicts, `scope=mine` filtering, MCP `get_my_impact`), Step 3 quota enforcement & auth hardening (429 + `Retry-After`, 304 quota exemption, write authentication, demo-key removal, rate-limit headers, MCP quota), and the Step 4 webhooks (CRUD + secret handling, HMAC-signed deliveries to a local receiver, service/event filters, retry-and-fail recording, validation).
 
 ### 3. Docker Deployment
 ```bash
@@ -253,6 +257,71 @@ Fresh databases no longer seed the demo agent (`agent_demo_01` / `agp_live_demo.
 
 ---
 
+## 🔔 Webhook Alerts (Step 4)
+
+Polling and holding an SSE connection open are both wasteful for an agent that only cares about *its* stack. Step 4 adds push alerts: a registered agent subscribes a URL once and AgentPulse POSTs signed events as they happen.
+
+```bash
+# Subscribe (the response contains the signing secret — shown only once)
+curl -X POST https://agentpulse.dev/v1/agents/me/webhooks \
+  -H "Authorization: Bearer agp_live_..." \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://bots.example.com/agentpulse",
+       "events": ["incident.created", "incident.resolved", "change.detected"],
+       "services": ["stripe", "openai"]}'
+
+# Manage
+curl https://agentpulse.dev/v1/agents/me/webhooks -H "Authorization: Bearer agp_live_..."          # list (no secrets)
+curl https://agentpulse.dev/v1/agents/me/webhooks/<id>/deliveries -H "Authorization: Bearer ..."  # last 20 attempts
+curl -X DELETE https://agentpulse.dev/v1/agents/me/webhooks/<id> -H "Authorization: Bearer ..."   # delete
+```
+
+All four management calls require the agent's API key and count toward the daily quota, like the manifest endpoints (Step 3 pattern). Deleting a webhook that isn't yours returns 404.
+
+**Filters.** `events` defaults to all three types. `services` is an explicit slug filter (validated against the catalog; unknown slug → 400). Predictable rule: **the explicit filter wins — no filter means all services.** The filter is deliberately *not* intersected with your dependency manifest automatically; to receive alerts only for your stack, set `services` to your manifest's services.
+
+**URLs.** Must be `https://`. `http://` is accepted only for `localhost` / `127.0.0.1` / `::1`, for local development and testing; any other non-https URL is rejected with 400.
+
+**Delivery format.** Each event is POSTed as JSON with `Content-Type: application/json`:
+
+```json
+{
+  "id": "whd_1a2b3c4d5e6f",
+  "type": "incident.created",
+  "created_at": "2026-11-21T22:30:00.000Z",
+  "data": { "id": "inc_...", "service_slug": "stripe", "severity": "major", "affected_scope": "...", "agent_summary": "...", "agent_hint": "...", "started_at": "...", "resolved_at": null }
+}
+```
+
+`data` is the incident row (in the API's existing shape) for `incident.*` events and the breaking-change row for `change.detected`. Headers:
+
+| Header | Value |
+| :--- | :--- |
+| `X-AgentPulse-Event` | The event type (same as `type` in the body) |
+| `X-AgentPulse-Delivery` | The delivery id (same as `id` in the body) |
+| `X-AgentPulse-Signature` | `sha256=<HMAC-SHA256 hex of the raw request body, keyed with the webhook secret>` |
+
+**Verify signatures before acting on a payload** — anyone can POST to your endpoint:
+
+```js
+import crypto from 'node:crypto';
+const expected = 'sha256=' + crypto.createHmac('sha256', WEBHOOK_SECRET).update(rawBody, 'utf8').digest('hex');
+const ok = crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(req.headers['x-agentpulse-signature']));
+```
+
+The secret (`whsec_...`) is returned **only** in the create response and is never included in list/get responses again. It is stored in plaintext server-side because it must be recoverable to sign every delivery (unlike API keys, which are only verified and therefore hashed).
+
+**Retries & delivery log.** Respond with any 2xx within **5 seconds** (`WEBHOOK_TIMEOUT_MS`). A non-2xx response, timeout, or network error is retried up to **3 total attempts** with backoff delays from `WEBHOOK_RETRY_DELAYS_MS` (comma-separated ms, default `1000,5000`). Every delivery is recorded in `webhook_deliveries` and updated in place across attempts (`pending` → `delivered` / `failed`, with attempt count, last HTTP status, and last error), and the exact signed payload bytes are stored for audit. Inspect via `GET /v1/agents/me/webhooks/{id}/deliveries`.
+
+**Dispatch.** Events originate in the storage layer: `createIncident`, `resolveIncident` (only on a live → resolved transition), and `createBreakingChange` emit `incident.created` / `incident.resolved` / `change.detected` on a domain event bus (`src/engine/events.js`), so every producer — synthetic ingestion, the Statuspage poller, the spec-diff worker — raises each event exactly once. The dispatcher (`src/workers/webhooks.js`) fans out asynchronously; delivery can never block or crash the request/ingestion path.
+
+| Env var | Default | Purpose |
+| :--- | :--- | :--- |
+| `WEBHOOK_RETRY_DELAYS_MS` | `1000,5000` | Backoff delays between attempts (attempts = delays + 1) |
+| `WEBHOOK_TIMEOUT_MS` | `5000` | Per-attempt delivery timeout |
+
+---
+
 ## 🗄️ Database Model (PostgreSQL & SQLite)
 
 The schema is defined in [`src/db/schema.sql`](file:///Users/optimusprime/Projects/Bot-First-Outage/src/db/schema.sql):
@@ -265,6 +334,8 @@ The schema is defined in [`src/db/schema.sql`](file:///Users/optimusprime/Projec
 - **`outage_signals`**: `id` (PK), `service_slug` (FK), `endpoint`, `error_code`, `error_type`, `received_at`.
 - **`spec_snapshots`**: `id` (PK), `service_slug` (FK), `spec_url`, `spec_hash` (SHA-256 of the raw spec), `spec_json` (raw spec), `fetched_at`. Latest row per service/URL is the diff baseline.
 - **`agent_dependencies`**: `id` (PK), `agent_id` (FK → `agent_clients`), `service_slug` (FK), `package_name` (nullable), `package_version` (nullable), `created_at`, `updated_at`. Unique per (agent, service); written with replace-all semantics by `PUT /v1/agents/me/dependencies`.
+- **`agent_webhooks`**: `id` (PK), `agent_id` (FK → `agent_clients`), `url`, `events` (JSON array), `services` (JSON array, null = all), `secret` (HMAC signing key, shown once at creation), `active`, `created_at`.
+- **`webhook_deliveries`**: `id` (PK), `webhook_id` (FK → `agent_webhooks`), `event_type`, `payload` (exact signed bytes), `status` (pending/delivered/failed), `attempts`, `last_status_code`, `last_error`, `created_at`, `delivered_at`.
 
 ---
 

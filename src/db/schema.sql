@@ -129,3 +129,43 @@ CREATE TABLE IF NOT EXISTS agent_dependencies (
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_dependencies_agent ON agent_dependencies(agent_id);
+
+-- 9. Agent Webhooks (Step 4: webhook alerts)
+-- One row per subscription. `events` is a JSON array subset of
+-- ('incident.created', 'incident.resolved', 'change.detected'); `services`
+-- is a JSON array of service slugs, NULL meaning all services. `secret` is
+-- the HMAC-SHA256 signing key for X-AgentPulse-Signature; it is returned
+-- exactly once, in the create response, and stored in plaintext because it
+-- must be recoverable to sign every delivery. The runtime SQLite schema in
+-- src/db/index.js creates these tables with CREATE TABLE IF NOT EXISTS.
+CREATE TABLE IF NOT EXISTS agent_webhooks (
+    id VARCHAR(64) PRIMARY KEY,
+    agent_id VARCHAR(64) NOT NULL REFERENCES agent_clients(id) ON DELETE CASCADE,
+    url VARCHAR(1024) NOT NULL,
+    events TEXT NOT NULL, -- JSON array of event types
+    services TEXT, -- JSON array of service slugs; NULL = all services
+    secret VARCHAR(128) NOT NULL,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_webhooks_agent ON agent_webhooks(agent_id);
+CREATE INDEX IF NOT EXISTS idx_agent_webhooks_active ON agent_webhooks(active);
+
+-- 10. Webhook Deliveries (Step 4)
+-- One row per (webhook, event) delivery, updated in place across retries.
+-- `payload` stores the exact JSON bytes that were signed and sent.
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+    id VARCHAR(64) PRIMARY KEY,
+    webhook_id VARCHAR(64) NOT NULL REFERENCES agent_webhooks(id) ON DELETE CASCADE,
+    event_type VARCHAR(64) NOT NULL,
+    payload TEXT NOT NULL,
+    status VARCHAR(16) NOT NULL DEFAULT 'pending', -- pending, delivered, failed
+    attempts INT NOT NULL DEFAULT 0,
+    last_status_code INT,
+    last_error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    delivered_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook ON webhook_deliveries(webhook_id, created_at DESC);

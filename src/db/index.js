@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import fs from 'node:fs';
+import { domainEvents } from '../engine/events.js';
 
 const DB_PATH = process.env.DB_PATH || path.resolve(process.cwd(), 'agentpulse.sqlite');
 
@@ -128,6 +129,37 @@ function initSchema(db) {
     );
 
     CREATE INDEX IF NOT EXISTS idx_agent_dependencies_agent ON agent_dependencies(agent_id);
+
+    CREATE TABLE IF NOT EXISTS agent_webhooks (
+      id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL,
+      url TEXT NOT NULL,
+      events TEXT NOT NULL,
+      services TEXT,
+      secret TEXT NOT NULL,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (agent_id) REFERENCES agent_clients(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_webhooks_agent ON agent_webhooks(agent_id);
+    CREATE INDEX IF NOT EXISTS idx_agent_webhooks_active ON agent_webhooks(active);
+
+    CREATE TABLE IF NOT EXISTS webhook_deliveries (
+      id TEXT PRIMARY KEY,
+      webhook_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_status_code INTEGER,
+      last_error TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      delivered_at TEXT,
+      FOREIGN KEY (webhook_id) REFERENCES agent_webhooks(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook ON webhook_deliveries(webhook_id, created_at DESC);
   `);
 
   // Check if initial services seeded
@@ -423,7 +455,10 @@ export function createIncident({ id, service_slug, severity, affected_scope, age
   const status = severity === 'critical' ? 'outage' : 'degraded';
   updateServiceStatus(service_slug, status);
 
-  return db.prepare('SELECT * FROM incidents WHERE id = ?').get(incidentId);
+  const incident = db.prepare('SELECT * FROM incidents WHERE id = ?').get(incidentId);
+  // Step 4: domain event for webhook dispatch (see src/engine/events.js).
+  domainEvents.emit('incident.created', incident);
+  return incident;
 }
 
 export function resolveIncident(incidentId) {
@@ -431,6 +466,7 @@ export function resolveIncident(incidentId) {
   const now = new Date().toISOString();
   const inc = db.prepare('SELECT * FROM incidents WHERE id = ?').get(incidentId);
   if (!inc) return null;
+  const wasActive = inc.resolved_at === null;
 
   db.prepare('UPDATE incidents SET resolved_at = ? WHERE id = ?').run(now, incidentId);
 
@@ -443,7 +479,13 @@ export function resolveIncident(incidentId) {
     updateServiceStatus(inc.service_slug, highestSev);
   }
 
-  return db.prepare('SELECT * FROM incidents WHERE id = ?').get(incidentId);
+  const resolved = db.prepare('SELECT * FROM incidents WHERE id = ?').get(incidentId);
+  // Step 4: only a live -> resolved transition is an event; re-resolving an
+  // already-resolved incident must not re-alert subscribers.
+  if (wasActive) {
+    domainEvents.emit('incident.resolved', resolved);
+  }
+  return resolved;
 }
 
 export function getBreakingChanges(serviceSlug = null, sinceTs = null) {
@@ -475,7 +517,10 @@ export function createBreakingChange({ id, service_slug, version_or_date, change
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run(bcId, service_slug, version_or_date, change_type, diff_summary, migration_hint, now);
 
-  return db.prepare('SELECT * FROM breaking_changes WHERE id = ?').get(bcId);
+  const change = db.prepare('SELECT * FROM breaking_changes WHERE id = ?').get(bcId);
+  // Step 4: domain event for webhook dispatch (see src/engine/events.js).
+  domainEvents.emit('change.detected', change);
+  return change;
 }
 
 export function registerAgentClient({ agent_name, operator_url }) {
@@ -728,6 +773,144 @@ export function deleteAgentDependencies(agentId) {
   const removed = getAgentDependencies(agentId).length;
   db.prepare('DELETE FROM agent_dependencies WHERE agent_id = ?').run(agentId);
   return removed;
+}
+
+// --- Webhook subscriptions & deliveries (Step 4: webhook alerts) ---
+
+export const WEBHOOK_EVENT_TYPES = ['incident.created', 'incident.resolved', 'change.detected'];
+
+function parseJsonArray(text) {
+  if (text === null || text === undefined) return null;
+  try {
+    const parsed = JSON.parse(text);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Public shape of a webhook row. The signing secret is only ever included
+ * when `includeSecret` is true — that happens exactly once, in the create
+ * response. The secret is stored in plaintext because it is needed to sign
+ * every delivery (unlike API keys, which are only ever verified).
+ */
+export function formatWebhook(row, { includeSecret = false } = {}) {
+  if (!row) return null;
+  const out = {
+    id: row.id,
+    agent_id: row.agent_id,
+    url: row.url,
+    events: parseJsonArray(row.events) || [],
+    services: parseJsonArray(row.services), // null = all services
+    active: row.active === 1 || row.active === true,
+    created_at: row.created_at
+  };
+  if (includeSecret) out.secret = row.secret;
+  return out;
+}
+
+export function createAgentWebhook({ agent_id, url, events, services }) {
+  const db = getDb();
+  const id = `wh_${crypto.randomUUID().substring(0, 12)}`;
+  const secret = `whsec_${crypto.randomBytes(24).toString('hex')}`;
+  const now = new Date().toISOString();
+  const eventList = Array.isArray(events) && events.length > 0 ? events : [...WEBHOOK_EVENT_TYPES];
+  const serviceList = Array.isArray(services) && services.length > 0 ? services : null;
+
+  db.prepare(`
+    INSERT INTO agent_webhooks (id, agent_id, url, events, services, secret, active, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+  `).run(id, agent_id, url, JSON.stringify(eventList), serviceList ? JSON.stringify(serviceList) : null, secret, now);
+
+  const row = db.prepare('SELECT * FROM agent_webhooks WHERE id = ?').get(id);
+  return formatWebhook(row, { includeSecret: true });
+}
+
+export function getAgentWebhooks(agentId) {
+  const db = getDb();
+  const rows = db.prepare('SELECT * FROM agent_webhooks WHERE agent_id = ? ORDER BY created_at ASC, rowid ASC').all(agentId);
+  return rows.map(row => formatWebhook(row));
+}
+
+/** Internal lookup (includes the secret) for the dispatcher. */
+export function getWebhookRowById(id) {
+  const db = getDb();
+  return db.prepare('SELECT * FROM agent_webhooks WHERE id = ?').get(id) || null;
+}
+
+/** Ownership-scoped lookup for the REST layer: null when not the agent's. */
+export function getAgentWebhookById(agentId, id) {
+  const db = getDb();
+  const row = db.prepare('SELECT * FROM agent_webhooks WHERE id = ? AND agent_id = ?').get(id, agentId);
+  return formatWebhook(row);
+}
+
+export function deleteAgentWebhook(agentId, id) {
+  const db = getDb();
+  const info = db.prepare('DELETE FROM agent_webhooks WHERE id = ? AND agent_id = ?').run(id, agentId);
+  return info.changes > 0;
+}
+
+/**
+ * Active webhooks whose event filter includes `eventType` and whose service
+ * filter matches `serviceSlug` (null/empty filter = all services). Returns
+ * raw rows (with secrets) for the dispatcher.
+ */
+export function getMatchingWebhooks(eventType, serviceSlug) {
+  const db = getDb();
+  const rows = db.prepare('SELECT * FROM agent_webhooks WHERE active = 1').all();
+  return rows.filter(row => {
+    const events = parseJsonArray(row.events) || [];
+    if (!events.includes(eventType)) return false;
+    const services = parseJsonArray(row.services);
+    if (services && services.length > 0 && !services.includes(serviceSlug)) return false;
+    return true;
+  });
+}
+
+export function createWebhookDelivery({ webhook_id, event_type, payload }) {
+  const db = getDb();
+  const id = `whd_${crypto.randomUUID().substring(0, 12)}`;
+  const now = new Date().toISOString();
+
+  db.prepare(`
+    INSERT INTO webhook_deliveries (id, webhook_id, event_type, payload, status, attempts, created_at)
+    VALUES (?, ?, ?, ?, 'pending', 0, ?)
+  `).run(id, webhook_id, event_type, payload, now);
+
+  return db.prepare('SELECT * FROM webhook_deliveries WHERE id = ?').get(id);
+}
+
+export function updateWebhookDelivery(id, { status, attempts, last_status_code, last_error, delivered_at }) {
+  const db = getDb();
+  db.prepare(`
+    UPDATE webhook_deliveries
+    SET status = ?, attempts = ?, last_status_code = ?, last_error = ?, delivered_at = ?
+    WHERE id = ?
+  `).run(status, attempts, last_status_code ?? null, last_error ?? null, delivered_at ?? null, id);
+  return db.prepare('SELECT * FROM webhook_deliveries WHERE id = ?').get(id);
+}
+
+export function getWebhookDeliveries(webhookId, limit = 20) {
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT * FROM webhook_deliveries
+    WHERE webhook_id = ?
+    ORDER BY created_at DESC, rowid DESC
+    LIMIT ?
+  `).all(webhookId, limit);
+  return rows.map(row => ({
+    id: row.id,
+    webhook_id: row.webhook_id,
+    event_type: row.event_type,
+    status: row.status,
+    attempts: row.attempts,
+    last_status_code: row.last_status_code,
+    last_error: row.last_error,
+    created_at: row.created_at,
+    delivered_at: row.delivered_at
+  }));
 }
 
 export function getSystemMetrics() {

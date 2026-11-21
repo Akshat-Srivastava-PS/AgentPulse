@@ -13,6 +13,12 @@ import {
   getAgentByApiKey,
   getAgentDependencies,
   setAgentDependencies,
+  createAgentWebhook,
+  getAgentWebhooks,
+  getAgentWebhookById,
+  deleteAgentWebhook,
+  getWebhookDeliveries,
+  WEBHOOK_EVENT_TYPES,
   recordAgentUsage,
   getAgentQuotaState,
   recordOutageSignal,
@@ -25,6 +31,11 @@ import { handleMcpRequest } from './mcp/server.js';
 import { generateLlmsTxt, generateLlmsFullTxt } from './discovery/llms.js';
 import { generateOpenApiSchema } from './discovery/openapi.js';
 import { startIngestionWorker, eventBroadcaster, executeSyntheticProbe } from './workers/ingestion.js';
+import { startWebhookDispatcher } from './workers/webhooks.js';
+
+// Step 4: webhook dispatch subscribes to the domain events the DB layer
+// emits from createIncident / resolveIncident / createBreakingChange.
+startWebhookDispatcher();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -281,6 +292,125 @@ export async function handleRequest(req, res) {
         count: stored.length,
         dependencies: stored
       }, rateLimitHeadersFor(agent));
+    }
+
+    // 3c. Webhook Subscriptions: /v1/agents/me/webhooks[/:id[/deliveries]] (Step 4)
+    const webhooksMatch = pathname.match(/^\/v1\/agents\/me\/webhooks(?:\/([a-zA-Z0-9_\-]+)(\/deliveries)?)?$/);
+    if (webhooksMatch && (method === 'GET' || method === 'POST' || method === 'DELETE')) {
+      const agent = authenticateRequest(req);
+      if (!agent) {
+        return sendJson(res, 401, {
+          error: 'Unauthorized: a valid API key is required (Authorization: Bearer agp_live_...). Register at POST /v1/agents/register.'
+        });
+      }
+      if (!consumeQuotaOrReject(res, agent)) return;
+      const rlHeaders = rateLimitHeadersFor(agent);
+      const webhookId = webhooksMatch[1] || null;
+      const isDeliveries = Boolean(webhooksMatch[2]);
+
+      // GET /v1/agents/me/webhooks/:id/deliveries — recent delivery log
+      if (isDeliveries) {
+        if (method !== 'GET') {
+          return sendJson(res, 404, { error: `Endpoint not found: ${method} ${pathname}` });
+        }
+        const webhook = getAgentWebhookById(agent.id, webhookId);
+        if (!webhook) {
+          return sendJson(res, 404, { error: `Webhook '${webhookId}' not found for this agent.` });
+        }
+        const deliveries = getWebhookDeliveries(webhookId, 20);
+        return sendJson(res, 200, {
+          webhook_id: webhookId,
+          count: deliveries.length,
+          deliveries
+        }, rlHeaders);
+      }
+
+      // POST /v1/agents/me/webhooks — create (secret shown only in this response)
+      if (method === 'POST' && !webhookId) {
+        const body = await parseJsonBody(req);
+        const { url, events, services } = body;
+
+        if (!url || typeof url !== 'string') {
+          return sendJson(res, 400, { error: 'Missing required field: url (string)' });
+        }
+        let parsedUrl;
+        try {
+          parsedUrl = new URL(url);
+        } catch {
+          return sendJson(res, 400, { error: `Invalid webhook url: '${url}'` });
+        }
+        const isLocalHttp = parsedUrl.protocol === 'http:' &&
+          ['localhost', '127.0.0.1', '::1', '[::1]'].includes(parsedUrl.hostname);
+        if (parsedUrl.protocol !== 'https:' && !isLocalHttp) {
+          return sendJson(res, 400, {
+            error: 'Webhook url must use https:// (http:// is only allowed for localhost / 127.0.0.1 during development).'
+          });
+        }
+
+        if (events !== undefined) {
+          if (!Array.isArray(events) || events.length === 0 || events.some(e => !WEBHOOK_EVENT_TYPES.includes(e))) {
+            return sendJson(res, 400, {
+              error: `events must be a non-empty array drawn from: ${WEBHOOK_EVENT_TYPES.join(', ')}`,
+              allowed_events: WEBHOOK_EVENT_TYPES
+            });
+          }
+        }
+
+        let serviceFilter = null;
+        if (services !== undefined && services !== null) {
+          if (!Array.isArray(services) || services.some(s => typeof s !== 'string' || s.trim().length === 0)) {
+            return sendJson(res, 400, {
+              error: 'services must be an array of service slugs (omit or pass null for all services).'
+            });
+          }
+          serviceFilter = services.map(s => s.trim().toLowerCase());
+          for (const slug of serviceFilter) {
+            if (!getService(slug)) {
+              return sendJson(res, 400, {
+                error: `Unknown service slug: '${slug}'. See GET /v1/services for supported services.`,
+                unknown_service: slug
+              });
+            }
+          }
+          if (serviceFilter.length === 0) serviceFilter = null;
+        }
+
+        const webhook = createAgentWebhook({
+          agent_id: agent.id,
+          url,
+          events: events || null,
+          services: serviceFilter
+        });
+
+        return sendJson(res, 201, {
+          message: 'Webhook created. Store the secret now — it is shown only in this response and is required to verify delivery signatures (X-AgentPulse-Signature).',
+          webhook
+        }, rlHeaders);
+      }
+
+      // GET /v1/agents/me/webhooks — list (never includes secrets)
+      if (method === 'GET' && !webhookId) {
+        const webhooks = getAgentWebhooks(agent.id);
+        return sendJson(res, 200, {
+          agent_id: agent.id,
+          count: webhooks.length,
+          webhooks
+        }, rlHeaders);
+      }
+
+      // DELETE /v1/agents/me/webhooks/:id — delete own webhook
+      if (method === 'DELETE' && webhookId) {
+        const deleted = deleteAgentWebhook(agent.id, webhookId);
+        if (!deleted) {
+          return sendJson(res, 404, { error: `Webhook '${webhookId}' not found for this agent.` });
+        }
+        return sendJson(res, 200, {
+          message: 'Webhook deleted. No further deliveries will be sent to it.',
+          id: webhookId
+        }, rlHeaders);
+      }
+
+      return sendJson(res, 404, { error: `Endpoint not found: ${method} ${pathname}` });
     }
 
     // 4. Batch Preflight: POST /v1/preflight

@@ -22,6 +22,9 @@ export function generateLlmsTxt(origin = 'https://agentpulse.dev') {
 ## My Dependency Manifest & Affected Answers (Auth Required)
 - [Dependency Manifest](${origin}/v1/agents/me/dependencies): \`PUT\` replaces your stored manifest: \`{"dependencies": [{"service": "stripe", "package": "stripe", "version": "14.5.0"}]}\` (package/version optional; unknown slugs rejected with 400). \`GET\` returns it. Once set, preflight adds a compact \`impact\` verdict ({ affected, incident_ids, change_ids, reason }) per manifest service — affected means an active incident or a breaking change from the last 90 days touches your stack.
 
+## Webhook Alerts (Auth Required)
+- [Webhooks](${origin}/v1/agents/me/webhooks): \`POST\` subscribes a URL to \`incident.created\`, \`incident.resolved\`, and \`change.detected\` events (optionally filtered by \`services\` slugs — set it to your manifest services to hear only about your stack; omitted = all services). The create response shows the signing \`secret\` ONCE. Every delivery is a POST of \`{"id", "type", "created_at", "data"}\` with headers \`X-AgentPulse-Event\`, \`X-AgentPulse-Delivery\`, and \`X-AgentPulse-Signature: sha256=<HMAC-SHA256 hex of the raw body, keyed with your secret>\` — verify it before trusting a payload. \`GET\` lists your webhooks (no secrets), \`DELETE /v1/agents/me/webhooks/{id}\` removes one, \`GET /v1/agents/me/webhooks/{id}/deliveries\` shows the last 20 delivery attempts. URLs must be https (http allowed only for localhost). Deliveries retry up to 3 attempts with backoff.
+
 ## Stateless HTTP MCP Server
 - [Stateless MCP Endpoint](${origin}/mcp): Streamable Model Context Protocol endpoint supporting both JSON-RPC 2.0 and Mcp-Method / Mcp-Name header routing. Send \`Authorization: Bearer <api_key>\` to identify your agent.
   - \`check_dependency_health\`: Mid-debugging stack health preflight (manifest-aware when authenticated).
@@ -165,6 +168,42 @@ With a manifest in place:
 - The MCP tool \`get_my_impact\` returns the verdict for your whole manifest in one call.
 
 A dependency is **affected** when its service has any active incident, or any breaking change detected in the last 90 days.
+
+### Webhook Alerts (\`POST/GET/DELETE /v1/agents/me/webhooks\`)
+Stop polling: subscribe a URL and get pushed alerts for incidents and breaking changes.
+\`\`\`bash
+curl -X POST "${origin}/v1/agents/me/webhooks" \\
+  -H "Authorization: Bearer <KEY>" \\
+  -H "Content-Type: application/json" \\
+  -d '{"url": "https://bots.example.com/agentpulse", "events": ["incident.created", "incident.resolved", "change.detected"], "services": ["stripe", "openai"]}'
+\`\`\`
+- \`events\` defaults to all three types. \`services\` is an explicit slug filter (validated; unknown slug → 400); omit it or pass null to receive all services. Tip: set \`services\` to the services in your dependency manifest to get only alerts for your stack — the filter is NOT intersected with your manifest automatically.
+- The URL must be \`https://\`; \`http://\` is accepted only for \`localhost\` / \`127.0.0.1\` (local development).
+- The \`201\` response contains the webhook \`secret\` (\`whsec_...\`) — **shown only once**, never returned by list/get calls again. Store it.
+- Management calls (create/list/delete/delivery log) require your API key and count toward your daily quota, like the manifest endpoints.
+
+Delivery format — a POST to your URL with \`Content-Type: application/json\`:
+\`\`\`json
+{
+  "id": "whd_1a2b3c4d5e6f",
+  "type": "incident.created",
+  "created_at": "2026-11-21T22:30:00.000Z",
+  "data": { "id": "inc_...", "service_slug": "stripe", "severity": "major", "affected_scope": "...", "agent_summary": "...", "agent_hint": "...", "started_at": "...", "resolved_at": null }
+}
+\`\`\`
+\`data\` is the incident row for \`incident.*\` events and the breaking-change row for \`change.detected\`. Headers on every delivery:
+- \`X-AgentPulse-Event\`: the event type (same as \`type\` in the body).
+- \`X-AgentPulse-Delivery\`: the delivery id (same as \`id\` in the body).
+- \`X-AgentPulse-Signature\`: \`sha256=<hex>\` — HMAC-SHA256 of the **raw request body**, keyed with your webhook secret.
+
+Verify before acting on a payload:
+\`\`\`js
+import crypto from 'node:crypto';
+const expected = 'sha256=' + crypto.createHmac('sha256', WEBHOOK_SECRET).update(rawBody, 'utf8').digest('hex');
+crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(req.headers['x-agentpulse-signature']));
+\`\`\`
+
+Delivery policy: respond with any 2xx within 5 seconds. Failures (non-2xx, timeout, network error) are retried up to 3 total attempts with backoff (default delays 1s, 5s; configurable via \`WEBHOOK_RETRY_DELAYS_MS\`). Every attempt outcome is recorded — inspect it with \`GET /v1/agents/me/webhooks/{id}/deliveries\` (most recent 20). Deleting a webhook stops future deliveries and removes its log.
 
 ### Crowdsourced Telemetry (\`POST /v1/telemetry/report\`)
 Report observed failures so the oracle detects outages early:
