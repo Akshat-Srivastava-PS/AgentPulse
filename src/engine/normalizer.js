@@ -107,8 +107,8 @@ export function compressIncident({ id, severity, affected_scope, agent_summary, 
 }
 
 /**
- * Builds the compact status payload matching the prompt specification:
- * Sample Compact Payload (GET /v1/status/stripe)
+ * Builds the compact status payload matching the specification:
+ * Compact Payload (GET /v1/status/{service})
  */
 export function formatCompactStatusPayload(service, activeIncidents = [], breakingChanges = []) {
   const formattedIncidents = activeIncidents.map(inc => compressIncident({

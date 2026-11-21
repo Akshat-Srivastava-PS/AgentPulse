@@ -502,7 +502,7 @@ export function generateOpenApiSchema(origin = 'https://agentpulse.dev') {
           summary: 'Migration Playbook for a Breaking Change',
           description: 'Returns a structured, machine-readable migration playbook generated from the change\'s own fields (Step 6): { change_id, service, kind, summary, steps: [{ action, detail, code_example? }], effort_estimate (low|medium|high), risk_notes }. The kind is the fine-grained spec-diff kind for schema_diff changes (removed_operation, parameter_now_required, removed_response_property, ...) recovered from the recorded diff summary, or the stored change_type for deprecations / rate-limit changes. Code examples are generic fetch-style templates built only from the change\'s operation, path, and parameter/property names — no vendor facts are invented. Public read, like the changes feed; every change in GET /v1/changes carries a playbook_url pointing here.',
           parameters: [
-            { name: 'id', in: 'path', required: true, schema: { type: 'string', example: 'bc_101' }, description: 'Breaking change id from GET /v1/changes' }
+            { name: 'id', in: 'path', required: true, schema: { type: 'string', example: 'bc_spec_0123456789abcdef' }, description: 'Breaking change id from GET /v1/changes' }
           ],
           responses: {
             '200': {

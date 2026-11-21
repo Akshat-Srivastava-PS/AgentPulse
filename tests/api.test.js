@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { dispatchRequest } from './testHelper.js';
+import { dispatchRequest, insertStripeIncidentFixture, insertOpenaiDeprecationFixture } from './testHelper.js';
 import { estimateTokenCount } from '../src/engine/normalizer.js';
 
 test('1. Discovery: GET /llms.txt adheres to llms.txt standard', async () => {
@@ -69,6 +69,7 @@ test('4. Bot Onboarding: POST /v1/agents/register issues API key with zero CAPTC
 });
 
 test('5. Core Query: GET /v1/status/stripe returns compact payload under 150 tokens', async () => {
+  insertStripeIncidentFixture();
   const res = await dispatchRequest({ url: '/v1/status/stripe' });
   assert.strictEqual(res.status, 200);
 
@@ -94,6 +95,7 @@ test('5. Core Query: GET /v1/status/stripe returns compact payload under 150 tok
 });
 
 test('6. ETag Caching: GET /v1/status/stripe with If-None-Match returns 304 Not Modified', async () => {
+  insertStripeIncidentFixture();
   // First fetch to obtain current ETag
   const res1 = await dispatchRequest({ url: '/v1/status/stripe' });
   const etag = res1.headers.get('etag');
@@ -148,6 +150,7 @@ test('7. Good Citizen Protocol: 304 response increases agent good_citizen_score'
 });
 
 test('8. Batch Preflight: POST /v1/preflight evaluates dependency health correctly', async () => {
+  insertStripeIncidentFixture();
   // Case A: includes degraded dependency (stripe)
   const res1 = await dispatchRequest({
     method: 'POST',
@@ -195,6 +198,7 @@ test('8. Batch Preflight: POST /v1/preflight evaluates dependency health correct
 });
 
 test('9. Delta Feed: GET /v1/changes returns recent breaking changes', async () => {
+  insertOpenaiDeprecationFixture();
   const res = await dispatchRequest({ url: '/v1/changes' });
   assert.strictEqual(res.status, 200);
   const data = await res.json();
@@ -207,6 +211,7 @@ test('9. Delta Feed: GET /v1/changes returns recent breaking changes', async () 
 });
 
 test('10. Catalog & Incidents: GET /v1/services and GET /v1/incidents', async () => {
+  insertStripeIncidentFixture();
   const servicesRes = await dispatchRequest({ url: '/v1/services' });
   assert.strictEqual(servicesRes.status, 200);
   const servicesData = await servicesRes.json();
@@ -269,6 +274,7 @@ test('12. Metrics: GET /v1/metrics returns system health and token economy metri
 });
 
 test('13. MCP Server: Standard JSON-RPC 2.0 initialize, tools/list, and tools/call', async () => {
+  insertStripeIncidentFixture();
   // initialize
   const initRes = await dispatchRequest({
     method: 'POST',
@@ -324,6 +330,7 @@ test('13. MCP Server: Standard JSON-RPC 2.0 initialize, tools/list, and tools/ca
 });
 
 test('14. MCP Server: Stateless HTTP Header-based Routing (Mcp-Method / Mcp-Name)', async () => {
+  insertStripeIncidentFixture();
   const res = await dispatchRequest({
     method: 'POST',
     url: '/mcp',

@@ -2,6 +2,7 @@ import test, { before, after } from 'node:test';
 import assert from 'node:assert';
 import { createServer } from '../src/server.js';
 import { AgentPulseClient, AgentPulseError } from '../sdk/index.js';
+import { insertStripeIncidentFixture, insertOpenaiDeprecationFixture, insertStripeChangeFixture } from './testHelper.js';
 
 // Step 6: the agentpulse-sdk package exercised against the REAL HTTP API —
 // a local ephemeral server running the actual app (not the in-process
@@ -32,6 +33,7 @@ async function registerAgent(name) {
 }
 
 test('45. SDK: status, preflight, and changes hit the real API; Authorization header is sent', async () => {
+  insertOpenaiDeprecationFixture();
   const agent = await registerAgent('SdkSurfaceBot');
   const seenAuth = [];
   const spyFetch = async (url, init) => {
@@ -61,6 +63,9 @@ test('45. SDK: status, preflight, and changes hit the real API; Authorization he
 });
 
 test('46. SDK: setDependencies + getMyImpact answer for the caller\'s stack; scope=mine is filtered', async () => {
+  insertStripeIncidentFixture();
+  insertStripeChangeFixture();
+  insertOpenaiDeprecationFixture();
   const agent = await registerAgent('SdkImpactBot');
   const client = new AgentPulseClient({ baseUrl, apiKey: agent.api_key });
 
@@ -78,11 +83,11 @@ test('46. SDK: setDependencies + getMyImpact answer for the caller\'s stack; sco
   assert.strictEqual(impact.manifest_count, 2);
   const stripeDep = impact.dependencies.find(d => d.service === 'stripe');
   assert.ok(stripeDep);
-  assert.strictEqual(stripeDep.impact.affected, true, 'stripe has the seeded active incident inc_9821');
+  assert.strictEqual(stripeDep.impact.affected, true, 'stripe has the fixture active incident inc_9821');
 
   const mine = await client.getChanges({ scope: 'mine' });
   assert.strictEqual(mine.scope, 'mine');
-  assert.ok(mine.changes.length >= 1, 'seeded stripe/openai changes are in scope');
+  assert.ok(mine.changes.length >= 1, 'fixture stripe/openai changes are in scope');
   assert.ok(mine.changes.every(c => ['stripe', 'openai'].includes(c.service_slug)));
   assert.ok(mine.changes.every(c => typeof c.playbook_url === 'string'));
 });

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { dispatchRequest } from './testHelper.js';
+import { dispatchRequest, insertStripeIncidentFixture, insertStripeChangeFixture } from './testHelper.js';
 import { createBreakingChange } from '../src/db/index.js';
 
 // Step 2: per-agent dependency manifests + "affected code" answers.
@@ -150,6 +150,7 @@ test('23. Manifest: unauthenticated and bad-key requests are rejected with 401',
 });
 
 test('24. Preflight enrichment: manifest services gain affected verdicts (incident-driven)', async () => {
+  insertStripeIncidentFixture();
   const agent = await registerAgent('PreflightImpactBot');
   const putRes = await putManifest(agent, [{ service: 'stripe' }, { service: 'github' }]);
   assert.strictEqual(putRes.status, 200);
@@ -163,7 +164,7 @@ test('24. Preflight enrichment: manifest services gain affected verdicts (incide
   assert.strictEqual(res.status, 200);
   const data = await res.json();
 
-  // stripe has the seeded active incident inc_9821 -> affected
+  // stripe has the fixture active incident inc_9821 -> affected
   const stripe = data.services.stripe;
   assert.ok(stripe.impact, 'Manifest service must carry an impact verdict');
   assert.strictEqual(stripe.impact.affected, true);
@@ -230,6 +231,7 @@ test('25. Preflight enrichment: a fresh breaking change marks its service affect
 });
 
 test('26. Delta Feed: scope=mine filters to manifest services and requires auth', async () => {
+  insertStripeChangeFixture();
   // Unauthenticated scope=mine -> 401
   const anonRes = await dispatchRequest({ url: '/v1/changes?scope=mine' });
   assert.strictEqual(anonRes.status, 401);
@@ -244,7 +246,7 @@ test('26. Delta Feed: scope=mine filters to manifest services and requires auth'
   assert.strictEqual(mineRes.status, 200);
   const mineData = await mineRes.json();
   assert.strictEqual(mineData.scope, 'mine');
-  assert.ok(mineData.count >= 1, 'Seeded stripe breaking change bc_102 must be included');
+  assert.ok(mineData.count >= 1, 'Fixture stripe breaking change bc_102 must be included');
   assert.ok(mineData.changes.every(c => c.service_slug === 'stripe'));
   assert.ok(mineData.changes.some(c => c.id === 'bc_102'));
 
@@ -261,6 +263,7 @@ test('26. Delta Feed: scope=mine filters to manifest services and requires auth'
 });
 
 test('27. MCP: get_my_impact returns manifest verdicts via header auth and api_key fallback', async () => {
+  insertStripeIncidentFixture();
   const agent = await registerAgent('McpImpactBot');
   await putManifest(agent, [{ service: 'stripe' }, { service: 'github' }]);
 

@@ -162,17 +162,21 @@ function initSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook ON webhook_deliveries(webhook_id, created_at DESC);
   `);
 
-  // Check if initial services seeded
+  // Seed the services catalog on first boot. The catalog is configuration
+  // (the registry of tracked vendors) — no incidents, breaking changes, or
+  // any other sample data are seeded; those come only from the live
+  // ingestion workers, synthetic probes, and agent telemetry.
   const countRow = db.prepare('SELECT count(*) as count FROM services').get();
   if (countRow.count === 0) {
     try {
-      seedInitialData(db);
+      seedServiceCatalog(db);
     } catch (err) {
       // Concurrent first boot (e.g. parallel test processes or clustered
       // workers opening the same fresh database): another process may seed
-      // at the same time and win the race. The seed data is identical, so
-      // losing is harmless — but only swallow the error if seeding did in
-      // fact happen; a genuinely empty database means a real failure.
+      // the catalog at the same time and win the race. The catalog rows are
+      // identical, so losing is harmless — but only swallow the error if
+      // seeding did in fact happen; a genuinely empty database means a
+      // real failure.
       const after = db.prepare('SELECT count(*) as count FROM services').get();
       if (after.count === 0) throw err;
     }
@@ -184,20 +188,23 @@ export function generateEtag(data) {
   return `W/"${hash}"`;
 }
 
-function seedInitialData(db) {
+function seedServiceCatalog(db) {
   const now = new Date().toISOString();
 
+  // Registry of tracked vendors. Every service starts 'operational' with
+  // no latency/uptime measurements — real values are written by the
+  // ingestion workers and synthetic probes as they run.
   const services = [
     {
       slug: 'stripe',
       name: 'Stripe',
       category: 'payments',
-      current_status: 'degraded',
+      current_status: 'operational',
       provider_status_page: 'https://status.stripe.com',
       healthcheck_url: 'https://api.stripe.com/healthcheck',
-      latency_ms: 184.2,
-      uptime_percentage: 99.82,
-      updated_at: '2026-11-20T22:55:00Z'
+      latency_ms: 0,
+      uptime_percentage: 99.95,
+      updated_at: now
     },
     {
       slug: 'openai',
@@ -206,8 +213,8 @@ function seedInitialData(db) {
       current_status: 'operational',
       provider_status_page: 'https://status.openai.com',
       healthcheck_url: 'https://api.openai.com/v1/models',
-      latency_ms: 245.5,
-      uptime_percentage: 99.91,
+      latency_ms: 0,
+      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -217,8 +224,8 @@ function seedInitialData(db) {
       current_status: 'operational',
       provider_status_page: 'https://status.anthropic.com',
       healthcheck_url: 'https://api.anthropic.com/v1/messages',
-      latency_ms: 310.2,
-      uptime_percentage: 99.94,
+      latency_ms: 0,
+      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -228,8 +235,8 @@ function seedInitialData(db) {
       current_status: 'operational',
       provider_status_page: 'https://www.githubstatus.com',
       healthcheck_url: 'https://api.github.com/zen',
-      latency_ms: 82.1,
-      uptime_percentage: 99.98,
+      latency_ms: 0,
+      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -239,8 +246,8 @@ function seedInitialData(db) {
       current_status: 'operational',
       provider_status_page: 'https://health.aws.amazon.com',
       healthcheck_url: 'https://aws.amazon.com',
-      latency_ms: 45.3,
-      uptime_percentage: 99.99,
+      latency_ms: 0,
+      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -250,8 +257,8 @@ function seedInitialData(db) {
       current_status: 'operational',
       provider_status_page: 'https://status.supabase.com',
       healthcheck_url: 'https://api.supabase.com',
-      latency_ms: 68.4,
-      uptime_percentage: 99.93,
+      latency_ms: 0,
+      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -261,8 +268,8 @@ function seedInitialData(db) {
       current_status: 'operational',
       provider_status_page: 'https://www.vercel-status.com',
       healthcheck_url: 'https://api.vercel.com',
-      latency_ms: 54.0,
-      uptime_percentage: 99.97,
+      latency_ms: 0,
+      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -272,8 +279,8 @@ function seedInitialData(db) {
       current_status: 'operational',
       provider_status_page: 'https://www.cloudflarestatus.com',
       healthcheck_url: 'https://1.1.1.1',
-      latency_ms: 22.1,
-      uptime_percentage: 99.99,
+      latency_ms: 0,
+      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -283,8 +290,8 @@ function seedInitialData(db) {
       current_status: 'operational',
       provider_status_page: 'https://status.resend.com',
       healthcheck_url: 'https://api.resend.com/emails',
-      latency_ms: 112.5,
-      uptime_percentage: 99.96,
+      latency_ms: 0,
+      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -294,7 +301,7 @@ function seedInitialData(db) {
       current_status: 'operational',
       provider_status_page: 'https://status.datadoghq.com',
       healthcheck_url: 'https://api.datadoghq.com',
-      latency_ms: 140.0,
+      latency_ms: 0,
       uptime_percentage: 99.95,
       updated_at: now
     },
@@ -305,8 +312,8 @@ function seedInitialData(db) {
       current_status: 'operational',
       provider_status_page: 'https://status.pinecone.io',
       healthcheck_url: 'https://api.pinecone.io',
-      latency_ms: 95.3,
-      uptime_percentage: 99.92,
+      latency_ms: 0,
+      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -316,8 +323,8 @@ function seedInitialData(db) {
       current_status: 'operational',
       provider_status_page: 'https://status.npmjs.org',
       healthcheck_url: 'https://registry.npmjs.org',
-      latency_ms: 78.4,
-      uptime_percentage: 99.94,
+      latency_ms: 0,
+      uptime_percentage: 99.95,
       updated_at: now
     }
   ];
@@ -332,62 +339,10 @@ function seedInitialData(db) {
     insertService.run(s.slug, s.name, s.category, s.current_status, etag, s.provider_status_page, s.healthcheck_url, s.latency_ms, s.uptime_percentage, s.updated_at);
   }
 
-  // Seed sample incident matching user's exact specification
-  const insertIncident = db.prepare(`
-    INSERT INTO incidents (id, service_slug, severity, affected_scope, agent_summary, agent_hint, started_at, resolved_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  insertIncident.run(
-    'inc_9821',
-    'stripe',
-    'major',
-    'POST /v1/payment_intents (us-east-1)',
-    'Elevated 502 error rate (~18%) starting 22:41 UTC.',
-    'Use exponential backoff (min 15s) or defer non-urgent retries.',
-    '2026-11-20T22:41:00Z',
-    null
-  );
-
-  // Update stripe etag with incident
-  const stripeEtag = generateEtag({ slug: 'stripe', status: 'degraded', incidents: ['inc_9821'] });
-  db.prepare('UPDATE services SET etag = ? WHERE slug = ?').run(stripeEtag, 'stripe');
-
-  // Seed realistic breaking changes
-  const insertBreakingChange = db.prepare(`
-    INSERT INTO breaking_changes (id, service_slug, version_or_date, change_type, diff_summary, migration_hint, detected_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  insertBreakingChange.run(
-    'bc_101',
-    'openai',
-    '2026-10-01',
-    'deprecation',
-    'Legacy fine-tuning endpoints and text-davinci-003 models removed.',
-    'Migrate calls to gpt-4o-mini or specify chat completions endpoint with model: "gpt-4o-2024-08-06".',
-    '2026-10-01T00:00:00Z'
-  );
-
-  insertBreakingChange.run(
-    'bc_102',
-    'stripe',
-    '2026-09-15',
-    'schema_diff',
-    'Stripe-Version header requires YYYY-MM-DD. `payment_method_types` deprecated in favor of automatic payment methods.',
-    'Omit `payment_method_types` and set `automatic_payment_methods[enabled]=true` on PaymentIntent creation.',
-    '2026-09-15T12:00:00Z'
-  );
-
-  insertBreakingChange.run(
-    'bc_103',
-    'supabase',
-    '2026-11-10',
-    'rate_limit_change',
-    'Free-tier Auth SMS burst limit tightened from 30/min to 10/min.',
-    'Ensure auth retries implement token-bucket pacing or switch to custom Twilio credentials.',
-    '2026-11-10T08:30:00Z'
-  );
+  // No incidents or breaking changes are seeded — ever. A fresh database
+  // has zero incidents and zero breaking changes; the Statuspage poller,
+  // the OpenAPI spec-diff worker, synthetic probes, and agent telemetry
+  // are the only sources of that data.
 
   // NOTE (Step 3): no demo agent is seeded anymore. Earlier versions seeded a
   // well-known demo key (agp_live_demo...); a predictable credential in every

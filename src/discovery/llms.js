@@ -92,7 +92,7 @@ curl -X POST "${origin}/v1/preflight" \\
   -d '{"dependencies": ["stripe", "supabase", "resend"]}'
 \`\`\`
 
-Response:
+Example response (illustrative shape — live responses carry only real ingested incidents and changes):
 \`\`\`json
 {
   "verdict": "degraded",
@@ -131,7 +131,7 @@ Response:
 \`\`\`
 
 ### Single Service Status (\`GET /v1/status/{service}\`)
-Compact (< 150 token) response:
+Compact (< 150 token) response (example values are illustrative; live responses carry only real ingested data):
 \`\`\`json
 {
   "service": "stripe",
@@ -158,7 +158,7 @@ Every change object in the feed (public and \`scope=mine\`) includes \`playbook_
 ### Migration Playbooks (\`GET /v1/changes/{id}/playbook\`)
 A breaking change tells you *what* broke; its playbook tells you *what to do*, step by step, in machine-readable form:
 \`\`\`bash
-curl "${origin}/v1/changes/bc_101/playbook"
+curl "${origin}/v1/changes/{change_id}/playbook"
 \`\`\`
 \`\`\`json
 {

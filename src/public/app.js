@@ -6,7 +6,7 @@ let currentServiceEtag = '';
 
 // Fallback baseline services if backend is unreachable or opening via file://
 const FALLBACK_SERVICES = [
-  { slug: 'stripe', name: 'Stripe', category: 'payments', current_status: 'degraded', latency_ms: 66, etag: 'W/"a32c7a1b72122fa1"' },
+  { slug: 'stripe', name: 'Stripe', category: 'payments', current_status: 'operational', latency_ms: 66, etag: 'W/"a32c7a1b72122fa1"' },
   { slug: 'openai', name: 'OpenAI API', category: 'ai_models', current_status: 'operational', latency_ms: 143, etag: 'W/"edf29f6166684e8d"' },
   { slug: 'anthropic', name: 'Anthropic Claude API', category: 'ai_models', current_status: 'operational', latency_ms: 51, etag: 'W/"874b377842acffde"' },
   { slug: 'github', name: 'GitHub Platform & Actions', category: 'dev_tools', current_status: 'operational', latency_ms: 100, etag: 'W/"897cf57054405d02"' },
@@ -214,21 +214,15 @@ async function selectService(slug) {
       document.getElementById('inc-hint').textContent = 'All systems nominal. Safe for automated high-concurrency tool execution.';
     }
   } catch (err) {
-    console.warn(`Could not fetch live status for ${slug}, showing simulated payload:`, err);
-    // Display simulated payload so UI never breaks
+    console.warn(`Could not fetch live status for ${slug}, showing offline placeholder payload:`, err);
+    // Display an honest placeholder so UI never breaks — no fabricated
+    // incidents: the backend is unreachable, so nothing is claimed about
+    // the service's real state.
     const fallbackData = {
       service: slug,
-      status: slug === 'stripe' ? 'degraded' : 'operational',
+      status: 'operational',
       updated_at: new Date().toISOString(),
-      active_incidents: slug === 'stripe' ? [
-        {
-          id: 'inc_9821',
-          severity: 'major',
-          scope: 'POST /v1/payment_intents (us-east-1)',
-          summary: 'Elevated 502 error rate (~18%) starting 22:41 UTC.',
-          agent_hint: 'Use exponential backoff (min 15s) or defer non-urgent retries.'
-        }
-      ] : [],
+      active_incidents: [],
       recent_breaking_changes: []
     };
 
@@ -244,7 +238,7 @@ window.testEtagCache = async function() {
     const start = performance.now();
     const res = await fetch(`/v1/status/${slug}`, {
       headers: {
-        'If-None-Match': currentServiceEtag || 'W/"sample"'
+        'If-None-Match': currentServiceEtag || 'W/"etag-placeholder"'
       }
     });
     const duration = Math.round(performance.now() - start);
@@ -384,7 +378,7 @@ window.handleAgentRegistration = async function(event) {
         `Tier: ${data.agent.tier} (Daily Quota: ${data.agent.daily_quota} req/day)\n\n` +
         `# Test with cURL:\n` +
         `curl -H "Authorization: Bearer ${apiKey}" \\\n` +
-        `     -H "If-None-Match: W/\"sample\"" \\\n` +
+        `     -H "If-None-Match: W/\"etag-placeholder\"" \\\n` +
         `     http://${window.location.host}/v1/status/stripe`;
       
       showToast(`Agent registered: ${data.agent.agent_name}`, 'success');

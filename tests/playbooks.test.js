@@ -118,14 +118,22 @@ test('43. Playbook: classification covers the remaining spec-diff kinds and fall
   assert.strictEqual(raw.details.operation, 'DELETE /v1/subscriptions/{subscription}');
 });
 
-test('44. Playbook endpoint: 200 for a real change id (seeded + spec-diff), 404 for unknown id', async () => {
-  // Seeded deprecation change
-  const seeded = await dispatchRequest({ url: '/v1/changes/bc_101/playbook' });
-  assert.strictEqual(seeded.status, 200);
-  const seededData = await seeded.json();
-  assert.strictEqual(seededData.playbook.change_id, 'bc_101');
-  assert.strictEqual(seededData.playbook.service, 'openai');
-  assertPlaybookShape(seededData.playbook, { kind: 'deprecation', effort: 'medium' });
+test('44. Playbook endpoint: 200 for a real change id (fixture + spec-diff), 404 for unknown id', async () => {
+  // A stored deprecation change, inserted as a fixture (the app seeds none)
+  const fixture = createBreakingChange({
+    id: 'bc_test_deprecation_fixture',
+    service_slug: 'openai',
+    version_or_date: '2026-10-01',
+    change_type: 'deprecation',
+    diff_summary: 'Legacy fine-tuning endpoints and text-davinci-003 models removed.',
+    migration_hint: 'Migrate calls to gpt-4o-mini or specify chat completions endpoint with model: "gpt-4o-2024-08-06".'
+  });
+  const fixtureRes = await dispatchRequest({ url: `/v1/changes/${fixture.id}/playbook` });
+  assert.strictEqual(fixtureRes.status, 200);
+  const fixtureData = await fixtureRes.json();
+  assert.strictEqual(fixtureData.playbook.change_id, fixture.id);
+  assert.strictEqual(fixtureData.playbook.service, 'openai');
+  assertPlaybookShape(fixtureData.playbook, { kind: 'deprecation', effort: 'medium' });
 
   // A fresh schema_diff change written the way the Step 1 worker writes it
   const created = createBreakingChange({

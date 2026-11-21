@@ -1,6 +1,64 @@
 import { EventEmitter } from 'node:events';
 import { Readable } from 'node:stream';
 import { handleRequest } from '../src/server.js';
+import { getDb, updateServiceStatus } from '../src/db/index.js';
+
+// --- Test fixtures --------------------------------------------------------
+// The app seeds NO sample incidents or breaking changes: a fresh database
+// contains only the services catalog. Tests that need a known incident or
+// breaking change insert it explicitly through these helpers. INSERT OR
+// IGNORE keeps each fixture idempotent when several test files share one
+// database file, and the fixture rows carry the same ids/content the old
+// global seeds used so assertions stay unchanged.
+
+export function insertStripeIncidentFixture() {
+  const db = getDb();
+  db.prepare(`
+    INSERT OR IGNORE INTO incidents (id, service_slug, severity, affected_scope, agent_summary, agent_hint, started_at, resolved_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
+  `).run(
+    'inc_9821',
+    'stripe',
+    'major',
+    'POST /v1/payment_intents (us-east-1)',
+    'Elevated 502 error rate (~18%) starting 22:41 UTC.',
+    'Use exponential backoff (min 15s) or defer non-urgent retries.',
+    '2026-11-20T22:41:00Z'
+  );
+  updateServiceStatus('stripe', 'degraded');
+}
+
+export function insertOpenaiDeprecationFixture() {
+  const db = getDb();
+  db.prepare(`
+    INSERT OR IGNORE INTO breaking_changes (id, service_slug, version_or_date, change_type, diff_summary, migration_hint, detected_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    'bc_101',
+    'openai',
+    '2026-10-01',
+    'deprecation',
+    'Legacy fine-tuning endpoints and text-davinci-003 models removed.',
+    'Migrate calls to gpt-4o-mini or specify chat completions endpoint with model: "gpt-4o-2024-08-06".',
+    '2026-10-01T00:00:00Z'
+  );
+}
+
+export function insertStripeChangeFixture() {
+  const db = getDb();
+  db.prepare(`
+    INSERT OR IGNORE INTO breaking_changes (id, service_slug, version_or_date, change_type, diff_summary, migration_hint, detected_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    'bc_102',
+    'stripe',
+    '2026-09-15',
+    'schema_diff',
+    'Stripe-Version header requires YYYY-MM-DD. `payment_method_types` deprecated in favor of automatic payment methods.',
+    'Omit `payment_method_types` and set `automatic_payment_methods[enabled]=true` on PaymentIntent creation.',
+    '2026-09-15T12:00:00Z'
+  );
+}
 
 export function dispatchRequest({ method = 'GET', url = '/', headers = {}, body = null }) {
   return new Promise((resolve, reject) => {

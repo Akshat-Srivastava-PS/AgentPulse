@@ -44,7 +44,7 @@ export const STATUSPAGE_REGISTRY = {
   resend: 'https://status.resend.com',
   npm: 'https://status.npmjs.org',
   pinecone: 'https://status.pinecone.io',
-  // Not in the seeded service catalog yet; skipped until the service exists.
+  // Not in the service catalog yet; skipped until the service exists.
   twilio: 'https://status.twilio.com'
 };
 

@@ -98,7 +98,7 @@ export function classifyBreakingChange(change) {
     if (m) return { kind, details: matchDetails(kind, m) };
   }
 
-  // Non-schema-diff rows (seeded deprecations, rate-limit changes, prose
+  // Non-schema-diff rows (deprecations, rate-limit changes, prose
   // schema notes) classify by their stored change_type.
   switch (change.change_type) {
     case 'deprecation': return { kind: 'deprecation', details: {} };

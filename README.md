@@ -13,6 +13,8 @@ AgentPulse is the ground-truth layer built for those callers:
 - **Push, not poll.** Signed webhooks and a live SSE stream deliver incidents and changes the moment they're recorded.
 - **Built for bots, priced in tokens.** Zero-CAPTCHA programmatic onboarding, an MCP server for IDE agents, an `llms.txt` discovery document, and a *Good Citizen Protocol* that rewards ETag caching with higher quotas.
 
+A status answer looks like this (illustrative example — live answers carry only real ingested data):
+
 ```json
 {
   "service": "stripe",
@@ -292,7 +294,7 @@ AgentPulse is a working, fully tested implementation (49/49 tests) being deploye
 - **OpenAI's spec** is YAML-only today; its diff feed activates when a JSON mirror is configured.
 - **Free-tier hosting sleeps when idle** and the local SQLite file resets on redeploy — fine for evaluation; a paid tier / external database is the production path.
 - The **SDK is not on npm yet**; use it from `sdk/` until it's published.
-- Seeded sample data ships as a fallback so a fresh install is explorable before the first real poll completes.
+- **No sample data, ever.** The service serves only live-ingested data: a fresh install's catalog starts with zero incidents and zero breaking changes, and the first Statuspage poll (within one poll interval — 5 minutes by default) populates real incidents, while the spec-diff worker adds real breaking changes as vendor specs change. Until the first poll lands, services honestly report `operational` with empty incident lists.
 
 ## License
 
