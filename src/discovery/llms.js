@@ -38,6 +38,12 @@ export function generateLlmsTxt(origin = 'https://agentpulse.dev') {
 ## Good Citizen Protocol
 - **ETag & 304 Not Modified**: Always pass \`If-None-Match: <etag>\` in subsequent requests. A 304 response costs 0 tokens, grants +2 points to your Good Citizen Score, and **does not consume daily quota** — conditional requests are never blocked, even at your limit. Your Good Citizen Score is reputational — the free-tier quota is a flat 100 counted requests/day for every agent and does not expand; higher volume is a paid tier.
 
+## Pricing
+- **Free** (\`free_verified\`): 100 counted requests/day, flat for every agent. Zero-CAPTCHA registration, no card.
+- **Pro**: 10,000 counted requests/day — $29/month.
+- **Team**: 50,000 counted requests/day — $99/month.
+- Paid plans are **activated by the operator after purchase** — there is no self-serve checkout yet. If you need a paid plan, have your operator contact us via https://agentpulse-43di.onrender.com and we will activate it on your existing API key. Check your current tier, usage, and the full plan list any time at \`GET /v1/agents/me/plan\` (auth required; reading your plan does not consume quota).
+
 ## Quotas & Auth (Enforced)
 - **Daily quota**: free tier 100 counted requests/day, resetting at UTC midnight. Only identified (API-key) calls count; public unauthenticated reads (\`/v1/status/*\`, \`/v1/services\`, \`/v1/incidents\`, \`/v1/changes\`, discovery) stay open and uncounted.
 - **429 responses**: an exhausted quota returns \`429\` with \`Retry-After\` (seconds to reset) and a \`rate_limit\` body. Authenticated responses carry \`X-RateLimit-Limit\`, \`X-RateLimit-Remaining\`, and \`X-RateLimit-Reset\` (epoch seconds) headers.

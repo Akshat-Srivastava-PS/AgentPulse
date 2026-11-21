@@ -135,6 +135,16 @@ Agents that cache politely get rewarded:
 - Exhaustion returns **429** with a `rate_limit` object, a `Retry-After` header (seconds to the UTC-midnight reset), and `X-RateLimit-Limit` / `-Remaining` / `-Reset` headers on authenticated responses.
 - **All writes require an API key.** Telemetry and probes reject anonymous callers (401). Registration stays open — onboarding *is* the product.
 
+**Plans** (single source of truth: `src/engine/plans.js`):
+
+| Plan | Tier id | Daily quota | Price |
+| :--- | :--- | :--- | :--- |
+| Free | `free_verified` | 100 counted calls/day | $0 |
+| Pro | `pro` | 10,000 counted calls/day | $29/month |
+| Team | `team` | 50,000 counted calls/day | $99/month |
+
+Registration always lands on Free. An agent can read its current tier, usage, and the full catalog at `GET /v1/agents/me/plan` (auth required; the read itself is not counted). **Honest activation note:** there is no self-serve checkout yet — no payment provider is connected. Paid plans are activated by the operator after purchase: the owner grants a plan with `PATCH /v1/admin/agents/{id}` (admin token required), which sets the agent's tier and daily quota from the catalog in one step.
+
 ### 7. Webhooks — push alerts
 
 Subscribe a URL once; AgentPulse POSTs signed events as they happen: `incident.created`, `incident.resolved`, `change.detected`. Filters: an explicit `services` list wins; no list means all services (the filter is deliberately *not* intersected with your manifest — set it to your manifest's services if that's what you want). Payloads are HMAC-SHA256 signed (`X-AgentPulse-Signature`), delivered with a 5-second timeout and up to 3 attempts with backoff, and every attempt is recorded in a delivery log you can inspect. URLs must be `https://` (plain `http://` only for localhost, for development). The signing secret is shown **once**, in the create response.
@@ -155,6 +165,7 @@ Subscribe a URL once; AgentPulse POSTs signed events as they happen: `incident.c
 | Changes | `GET /v1/changes?since=&service=&scope=mine` | Breaking-change delta feed; every change carries `playbook_url`. |
 | Playbook | `GET /v1/changes/{id}/playbook` | Full migration playbook for one change (public, cacheable). |
 | Manifest | `GET` / `PUT /v1/agents/me/dependencies` | Read / replace-all write of your dependency manifest (auth required). |
+| Plan | `GET /v1/agents/me/plan` | Your tier, quota usage, and the plan catalog (auth required; not counted). |
 | Webhooks | `POST` / `GET /v1/agents/me/webhooks`, `DELETE /v1/agents/me/webhooks/{id}`, `GET /v1/agents/me/webhooks/{id}/deliveries` | Manage subscriptions and inspect delivery attempts (auth required). |
 | Telemetry | `POST /v1/telemetry/report` | Report an observed outage signal (auth required). |
 | Probes | `POST /v1/synthetic/probe` | Trigger one synthetic health probe (auth required). |
@@ -251,6 +262,7 @@ Two owner-only endpoints expose it:
 | :--- | :--- |
 | `GET /v1/admin/agents` | Fleet totals (agents, requests today, requests in the last 24h, counted requests today) plus one row per agent: requests today, quota remaining, Good Citizen score, lifetime logged requests, last-seen time, and its top 3 endpoints. |
 | `GET /v1/admin/requests?limit=50` | The most recent request-log rows (limit clamped to 1–200). |
+| `PATCH /v1/admin/agents/{id}` | Grant a plan: body `{ "tier": "pro" }` sets the agent's tier and daily quota from the plan catalog (`free_verified` / `pro` / `team`). Unknown tier → 400; unknown agent → 404. This is how paid plans are activated until a payment provider is connected. |
 
 There is also a human page at **`GET /admin`**: paste the admin token (kept only in the tab's session storage) and it renders the totals, the per-agent table, and a recent-requests feed, auto-refreshing every 30 seconds.
 

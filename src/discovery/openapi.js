@@ -192,6 +192,52 @@ export function generateOpenApiSchema(origin = 'https://agentpulse.dev') {
           }
         }
       },
+      '/v1/agents/me/plan': {
+        get: {
+          summary: 'Get My Plan & Pricing Catalog',
+          description: 'Returns the authenticated agent\'s current tier, daily quota, requests used today and remaining, plus the full plan catalog (free_verified 100/day free; pro 10,000/day $29/mo; team 50,000/day $99/mo). Paid plans are activated by the operator after purchase — there is no self-serve checkout; the `upgrade` field explains how. Reading your plan does not consume quota.',
+          security: [{ bearerAuth: [] }],
+          responses: {
+            '200': {
+              description: 'The caller\'s plan state and the plan catalog',
+              headers: RATE_LIMIT_HEADERS,
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      tier: { type: 'string', example: 'free_verified' },
+                      daily_quota: { type: 'integer', example: 100 },
+                      requests_today: { type: 'integer', example: 0 },
+                      quota_remaining: { type: 'integer', example: 100 },
+                      plans: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            tier: { type: 'string', example: 'pro' },
+                            name: { type: 'string', example: 'Pro' },
+                            daily_quota: { type: 'integer', example: 10000 },
+                            price_usd_month: { type: 'integer', example: 29 }
+                          }
+                        }
+                      },
+                      upgrade: {
+                        type: 'object',
+                        properties: {
+                          how: { type: 'string' },
+                          url: { type: 'string', format: 'uri' }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            '401': { description: 'Missing or invalid API key' }
+          }
+        }
+      },
       '/v1/agents/me/webhooks': {
         post: {
           summary: 'Create a Webhook Subscription',

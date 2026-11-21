@@ -4,6 +4,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { domainEvents } from '../engine/events.js';
 import { getRequestLogContext } from '../engine/requestContext.js';
+import { PLANS, getPlan } from '../engine/plans.js';
 
 const DB_PATH = process.env.DB_PATH || path.resolve(process.cwd(), 'agentpulse.sqlite');
 
@@ -699,10 +700,12 @@ export function registerAgentClient({ agent_name, operator_url }) {
   const now = new Date().toISOString();
   const today = now.substring(0, 10);
 
+  // Registration always lands on the free plan (see src/engine/plans.js).
+  const freePlan = PLANS.free_verified;
   db.prepare(`
     INSERT INTO agent_clients (id, api_key_hash, agent_name, operator_url, tier, daily_quota, good_citizen_score, requests_today, last_reset_date, created_at)
-    VALUES (?, ?, ?, ?, 'free_verified', 100, 100, 0, ?, ?)
-  `).run(id, apiKeyHash, agent_name, operator_url, today, now);
+    VALUES (?, ?, ?, ?, ?, ?, 100, 0, ?, ?)
+  `).run(id, apiKeyHash, agent_name, operator_url, freePlan.tier, freePlan.daily_quota, today, now);
 
   const client = db.prepare('SELECT id, agent_name, operator_url, tier, daily_quota, good_citizen_score FROM agent_clients WHERE id = ?').get(id);
 
@@ -1145,9 +1148,41 @@ export function getRecentRequestLog(limit = 50) {
 }
 
 /**
- * Owner dashboard payload: fleet totals plus one row per registered agent
- * (quota state from the same helper the enforcement path uses, usage
- * aggregates from the request log), sorted by requests_today desc.
+ * One agent row in the admin shape: quota state from the same helper the
+ * enforcement path uses, usage aggregates from the request log. Shared by
+ * the admin overview and the plan-grant path so both always agree.
+ */
+function buildAdminAgentRow(row) {
+  const db = getDb();
+  const state = getAgentQuotaState(row.id);
+  const total = db.prepare('SELECT count(*) as count FROM request_log WHERE agent_id = ?').get(row.id).count;
+  const lastSeen = db.prepare('SELECT MAX(created_at) as last_seen FROM request_log WHERE agent_id = ?').get(row.id).last_seen;
+  const top = db.prepare(`
+    SELECT path, count(*) as count FROM request_log
+    WHERE agent_id = ?
+    GROUP BY path
+    ORDER BY count DESC, path ASC
+    LIMIT 3
+  `).all(row.id);
+  return {
+    id: row.id,
+    agent_name: row.agent_name,
+    operator_url: row.operator_url,
+    tier: row.tier,
+    daily_quota: row.daily_quota,
+    requests_today: state ? state.used : row.requests_today,
+    quota_remaining: state ? state.remaining : Math.max(0, row.daily_quota - row.requests_today),
+    good_citizen_score: row.good_citizen_score,
+    total_requests: total,
+    last_seen_at: lastSeen || null,
+    top_endpoints: top.map(t => ({ path: t.path, count: t.count })),
+    created_at: row.created_at
+  };
+}
+
+/**
+ * Owner dashboard payload: fleet totals plus one row per registered agent,
+ * sorted by requests_today desc.
  */
 export function getAdminOverview() {
   const db = getDb();
@@ -1162,37 +1197,32 @@ export function getAdminOverview() {
     counted_today: db.prepare('SELECT count(*) as count FROM request_log WHERE counted = 1 AND created_at >= ?').get(todayStart).count
   };
 
-  const totalStmt = db.prepare('SELECT count(*) as count FROM request_log WHERE agent_id = ?');
-  const lastSeenStmt = db.prepare('SELECT MAX(created_at) as last_seen FROM request_log WHERE agent_id = ?');
-  const topStmt = db.prepare(`
-    SELECT path, count(*) as count FROM request_log
-    WHERE agent_id = ?
-    GROUP BY path
-    ORDER BY count DESC, path ASC
-    LIMIT 3
-  `);
-
-  const agents = db.prepare('SELECT * FROM agent_clients ORDER BY created_at ASC').all().map(row => {
-    const state = getAgentQuotaState(row.id);
-    return {
-      id: row.id,
-      agent_name: row.agent_name,
-      operator_url: row.operator_url,
-      tier: row.tier,
-      daily_quota: row.daily_quota,
-      requests_today: state ? state.used : row.requests_today,
-      quota_remaining: state ? state.remaining : Math.max(0, row.daily_quota - row.requests_today),
-      good_citizen_score: row.good_citizen_score,
-      total_requests: totalStmt.get(row.id).count,
-      last_seen_at: lastSeenStmt.get(row.id).last_seen || null,
-      top_endpoints: topStmt.all(row.id).map(t => ({ path: t.path, count: t.count })),
-      created_at: row.created_at
-    };
-  });
+  const agents = db.prepare('SELECT * FROM agent_clients ORDER BY created_at ASC').all().map(buildAdminAgentRow);
 
   agents.sort((a, b) => b.requests_today - a.requests_today);
 
   return { totals, agents };
+}
+
+/**
+ * Owner plan grant: move an agent to a plan from the catalog
+ * (src/engine/plans.js), setting BOTH tier and daily_quota from the plan
+ * so the two can never drift apart. This is how paid plans are activated
+ * today — by the operator, after purchase; there is no self-serve
+ * checkout. Returns the updated agent in the admin row shape, or null
+ * when the agent does not exist or the tier is unknown.
+ */
+export function setAgentTier(agentId, tier) {
+  const plan = getPlan(tier);
+  if (!plan) return null;
+  const db = getDb();
+  const existing = getAgentClientById(agentId);
+  if (!existing) return null;
+
+  db.prepare('UPDATE agent_clients SET tier = ?, daily_quota = ? WHERE id = ?')
+    .run(plan.tier, plan.daily_quota, agentId);
+
+  return buildAdminAgentRow(getAgentClientById(agentId));
 }
 
 export function getSystemMetrics() {

@@ -28,8 +28,10 @@ import {
   logRequest,
   getRecentRequestLog,
   getAdminOverview,
-  getAgentClientById
+  getAgentClientById,
+  setAgentTier
 } from './db/index.js';
+import { getPlan, listPlans, PLAN_TIERS } from './engine/plans.js';
 import { requestLogContext } from './engine/requestContext.js';
 
 import { formatCompactStatusPayload } from './engine/normalizer.js';
@@ -55,7 +57,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 // CORS & Security Headers
 function setCorsHeaders(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, If-None-Match, Mcp-Method, Mcp-Name, User-Agent');
   res.setHeader('Access-Control-Expose-Headers', 'ETag, X-Good-Citizen-Score, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, Retry-After');
 }
@@ -338,6 +340,30 @@ async function handleRequestInner(req, res, logCtx) {
         message: 'Agent registered successfully. Zero-CAPTCHA verification complete.',
         agent
       });
+    }
+
+    // 3a. My Plan: GET /v1/agents/me/plan
+    // The caller's current tier/quota state plus the full plan catalog.
+    // A read of the agent's own billing state: it does NOT consume quota.
+    if (pathname === '/v1/agents/me/plan' && method === 'GET') {
+      const agent = authenticateRequest(req);
+      if (!agent) {
+        return sendJson(res, 401, {
+          error: 'Unauthorized: a valid API key is required (Authorization: Bearer agp_live_...). Register at POST /v1/agents/register.'
+        });
+      }
+      const state = getAgentQuotaState(agent.id);
+      return sendJson(res, 200, {
+        tier: agent.tier,
+        daily_quota: state ? state.limit : agent.daily_quota,
+        requests_today: state ? state.used : 0,
+        quota_remaining: state ? state.remaining : agent.daily_quota,
+        plans: listPlans(),
+        upgrade: {
+          how: 'Paid plans are activated by the operator after purchase — see website',
+          url: 'https://agentpulse-43di.onrender.com'
+        }
+      }, rateLimitHeadersFor(agent));
     }
 
     // 3b. Dependency Manifests: GET/PUT /v1/agents/me/dependencies (Step 2)
@@ -776,6 +802,37 @@ async function handleRequestInner(req, res, logCtx) {
         totals: overview.totals,
         agents: overview.agents
       });
+    }
+
+    // Owner plan grant: PATCH /v1/admin/agents/:id { tier }
+    // How paid plans are activated today (no self-serve checkout yet):
+    // the operator grants a plan after purchase; tier AND daily_quota are
+    // set from the plan catalog (src/engine/plans.js).
+    const adminAgentMatch = pathname.match(/^\/v1\/admin\/agents\/([a-zA-Z0-9_\-]+)$/);
+    if (adminAgentMatch && method === 'PATCH') {
+      const auth = checkAdminAuth(req);
+      if (!auth.ok) return sendJson(res, auth.status, auth.body);
+
+      let body;
+      try {
+        body = await parseJsonBody(req);
+      } catch {
+        return sendJson(res, 400, { error: 'Invalid JSON payload' });
+      }
+
+      const tier = body ? body.tier : undefined;
+      if (typeof tier !== 'string' || !getPlan(tier)) {
+        return sendJson(res, 400, {
+          error: `Invalid tier: expected one of ${PLAN_TIERS.join(', ')}`,
+          allowed_tiers: PLAN_TIERS
+        });
+      }
+
+      const updated = setAgentTier(adminAgentMatch[1], tier);
+      if (!updated) {
+        return sendJson(res, 404, { error: `Agent '${adminAgentMatch[1]}' not found.` });
+      }
+      return sendJson(res, 200, updated);
     }
 
     if (pathname === '/v1/admin/requests' && method === 'GET') {
