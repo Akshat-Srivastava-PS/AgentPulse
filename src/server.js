@@ -1,6 +1,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -23,8 +24,13 @@ import {
   recordAgentUsage,
   getAgentQuotaState,
   recordOutageSignal,
-  getSystemMetrics
+  getSystemMetrics,
+  logRequest,
+  getRecentRequestLog,
+  getAdminOverview,
+  getAgentClientById
 } from './db/index.js';
+import { requestLogContext } from './engine/requestContext.js';
 
 import { formatCompactStatusPayload } from './engine/normalizer.js';
 import { evaluatePreflight } from './engine/diffEngine.js';
@@ -113,6 +119,32 @@ function authenticateRequest(req) {
   return getAgentByApiKey(token);
 }
 
+// --- Owner visibility: admin auth ---
+// The admin surface is gated by a single bearer token from the
+// ADMIN_TOKEN env var. When it is unset/empty the admin API is disabled
+// entirely (503) — there is no default or fallback credential.
+
+function checkAdminAuth(req) {
+  const configured = process.env.ADMIN_TOKEN;
+  if (!configured) {
+    return { ok: false, status: 503, body: { error: 'admin_disabled' } };
+  }
+  const authHeader = req.headers['authorization'] || '';
+  const parts = authHeader.split(' ');
+  const provided = parts.length === 2 && parts[0].toLowerCase() === 'bearer' ? parts[1] : null;
+  if (!provided) {
+    return { ok: false, status: 401, body: { error: 'unauthorized' } };
+  }
+  const providedBuf = Buffer.from(provided);
+  const configuredBuf = Buffer.from(configured);
+  const matches = providedBuf.length === configuredBuf.length &&
+    crypto.timingSafeEqual(providedBuf, configuredBuf);
+  if (!matches) {
+    return { ok: false, status: 401, body: { error: 'unauthorized' } };
+  }
+  return { ok: true };
+}
+
 // --- Step 3: quota enforcement + rate-limit headers ---
 // Policy: only identified (authenticated) agents consume quota. Public,
 // unauthenticated read endpoints stay open and uncounted — they are the
@@ -162,7 +194,76 @@ function consumeQuotaOrReject(res, agent) {
   return true;
 }
 
+// --- Owner visibility: request logging ---
+// Every /v1/* request (except the admin endpoints themselves) and every
+// MCP tools/call gets exactly one request_log row, written when the
+// response ends. Identified calls carry the agent's id+name; anonymous
+// and public reads are logged with a null agent. The `counted` flag is
+// flipped by recordAgentUsage (via the AsyncLocalStorage context) at the
+// same place quota is consumed, so the log and the quota counter can
+// never disagree. Logging is wrapped in try/catch end to end — it must
+// never break the request it observes.
+
 export async function handleRequest(req, res) {
+  let pathname = req.url || '/';
+  try {
+    pathname = new URL(req.url, 'http://localhost').pathname;
+  } catch { /* keep raw path */ }
+
+  const logCtx = {
+    shouldLog: pathname.startsWith('/v1/') && !pathname.startsWith('/v1/admin'),
+    logged: false,
+    agentId: null,
+    agentName: null,
+    counted: 0,
+    method: (req.method || 'GET').toUpperCase(),
+    path: pathname
+  };
+
+  // Attribute up front when the caller presents a known API key; the MCP
+  // gate fills this in later for api_key-argument callers.
+  try {
+    const agent = authenticateRequest(req);
+    if (agent) {
+      logCtx.agentId = agent.id;
+      logCtx.agentName = agent.agent_name;
+    }
+  } catch { /* attribution is best-effort */ }
+
+  const writeLogRow = () => {
+    if (!logCtx.shouldLog || logCtx.logged) return;
+    logCtx.logged = true;
+    try {
+      let agentName = logCtx.agentName;
+      if (!agentName && logCtx.agentId) {
+        const row = getAgentClientById(logCtx.agentId);
+        if (row) agentName = row.agent_name;
+      }
+      logRequest({
+        agent_id: logCtx.agentId,
+        agent_name: agentName,
+        method: logCtx.method,
+        path: logCtx.path,
+        status_code: res.statusCode || 200,
+        counted: logCtx.counted
+      });
+    } catch { /* logging must never break a request */ }
+  };
+
+  const originalEnd = res.end.bind(res);
+  res.end = (...args) => {
+    writeLogRow();
+    return originalEnd(...args);
+  };
+  // Long-lived responses (SSE) end via connection close, not res.end.
+  if (typeof res.on === 'function') {
+    res.on('close', writeLogRow);
+  }
+
+  return requestLogContext.run(logCtx, () => handleRequestInner(req, res, logCtx));
+}
+
+async function handleRequestInner(req, res, logCtx) {
   const origin = `http://${req.headers.host || 'localhost:' + PORT}`;
   const parsedUrl = new URL(req.url, origin);
   const pathname = parsedUrl.pathname;
@@ -201,6 +302,12 @@ export async function handleRequest(req, res) {
     // 2. Stateless HTTP MCP Server Endpoint (/mcp)
     if (pathname === '/mcp') {
       const body = method === 'POST' ? await parseJsonBody(req).catch(() => ({})) : {};
+      // Owner visibility: only tools/call is logged (tools/list, ping,
+      // initialize are protocol chatter, not agent usage).
+      const headerMethod = req.headers['mcp-method'];
+      if (headerMethod === 'tools/call' || headerMethod === 'execute' || body.method === 'tools/call') {
+        logCtx.shouldLog = true;
+      }
       const mcpResponse = await handleMcpRequest(req, body);
       return sendJson(res, mcpResponse.status, mcpResponse.body, mcpResponse.headers || {});
     }
@@ -655,6 +762,42 @@ export async function handleRequest(req, res) {
       const service = body.service || 'stripe';
       const result = await executeSyntheticProbe(service);
       return sendJson(res, 200, result, rateLimitHeadersFor(agent));
+    }
+
+    // 12b. Owner Visibility: admin API + owner page (Step: admin)
+    // These routes are deliberately excluded from the request log (see
+    // handleRequest) so owner traffic never pollutes agent usage data.
+    if (pathname === '/v1/admin/agents' && method === 'GET') {
+      const auth = checkAdminAuth(req);
+      if (!auth.ok) return sendJson(res, auth.status, auth.body);
+      const overview = getAdminOverview();
+      return sendJson(res, 200, {
+        generated_at: new Date().toISOString(),
+        totals: overview.totals,
+        agents: overview.agents
+      });
+    }
+
+    if (pathname === '/v1/admin/requests' && method === 'GET') {
+      const auth = checkAdminAuth(req);
+      if (!auth.ok) return sendJson(res, auth.status, auth.body);
+      const rawLimit = parseInt(parsedUrl.searchParams.get('limit') || '50', 10);
+      const limit = Number.isFinite(rawLimit) ? Math.min(200, Math.max(1, rawLimit)) : 50;
+      const requests = getRecentRequestLog(limit);
+      return sendJson(res, 200, {
+        generated_at: new Date().toISOString(),
+        count: requests.length,
+        requests
+      });
+    }
+
+    if (pathname === '/admin' && method === 'GET') {
+      const adminPath = path.join(PUBLIC_DIR, 'admin.html');
+      if (fs.existsSync(adminPath)) {
+        const adminContent = fs.readFileSync(adminPath);
+        return sendText(res, 200, adminContent, 'text/html; charset=utf-8');
+      }
+      return sendText(res, 404, 'Admin page not found');
     }
 
     // 13. Static Frontend Assets Serving

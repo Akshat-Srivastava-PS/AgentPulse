@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AgentPulse | Owner Visibility</title>
+  <meta name="description" content="Owner-only view: which agents are using AgentPulse and how many requests each one makes.">
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    .admin-wrap { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+    .admin-token-bar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 20px; }
+    .admin-token-bar .form-input { flex: 1 1 280px; }
+    .admin-message { padding: 14px 16px; border-radius: 10px; border: 1px solid var(--border-subtle, #2a2f3a); margin-bottom: 20px; font-size: 0.9rem; }
+    .admin-message.error { color: var(--accent-rose, #fb7185); }
+    .admin-message.info { color: var(--text-secondary, #9aa4b2); }
+    table.admin-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    table.admin-table th, table.admin-table td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border-subtle, #2a2f3a); vertical-align: top; }
+    table.admin-table th { color: var(--text-muted, #6b7280); font-family: var(--font-mono, monospace); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    table.admin-table td.num { font-family: var(--font-mono, monospace); }
+    .admin-feed { list-style: none; margin: 0; padding: 0; font-size: 0.83rem; }
+    .admin-feed li { display: flex; gap: 10px; flex-wrap: wrap; padding: 7px 2px; border-bottom: 1px solid var(--border-subtle, #2a2f3a); font-family: var(--font-mono, monospace); }
+    .admin-feed .who { color: var(--accent-cyan, #22d3ee); }
+    .admin-feed .anon { color: var(--text-muted, #6b7280); }
+    .admin-feed .counted { color: var(--accent-emerald, #34d399); }
+    .admin-feed .uncounted { color: var(--text-muted, #6b7280); }
+    .top-eps { color: var(--text-secondary, #9aa4b2); font-size: 0.78rem; }
+    .admin-meta { color: var(--text-muted, #6b7280); font-size: 0.78rem; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div class="app-container">
+    <header class="app-header">
+      <div class="logo-group">
+        <div class="logo-icon">
+          <svg viewBox="0 0 24 24">
+            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+          </svg>
+        </div>
+        <div class="logo-text">
+          <h1>AgentPulse</h1>
+          <span>Owner Visibility</span>
+        </div>
+      </div>
+      <nav class="nav-links">
+        <a href="/" class="pill-link">Dashboard</a>
+      </nav>
+    </header>
+
+    <main class="admin-wrap">
+      <form id="token-form" class="admin-token-bar">
+        <input id="token-input" class="form-input" type="password" placeholder="Admin token (ADMIN_TOKEN)" autocomplete="off">
+        <button type="submit" class="btn-primary">View usage</button>
+        <button type="button" id="clear-token" class="btn-secondary">Forget token</button>
+      </form>
+
+      <div id="message" class="admin-message info">Enter the admin token to see which agents are using this service and how many requests each one makes. The token is kept only in this tab's session storage.</div>
+
+      <section id="totals-section" hidden>
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">Registered Agents</div>
+            <div class="stat-value" id="total-agents">–</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Requests Today</div>
+            <div class="stat-value" id="total-requests-today">–</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Requests (24h)</div>
+            <div class="stat-value" id="total-requests-24h">–</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Counted Today (quota)</div>
+            <div class="stat-value" id="total-counted-today">–</div>
+          </div>
+        </div>
+      </section>
+
+      <section id="agents-section" class="section-panel" hidden>
+        <div class="panel-header">
+          <h3><span>🤖</span> Agents</h3>
+        </div>
+        <div style="overflow-x:auto;">
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>Agent</th>
+                <th>Requests today</th>
+                <th>Total requests</th>
+                <th>Quota left</th>
+                <th>Score</th>
+                <th>Last active</th>
+                <th>Top endpoints</th>
+              </tr>
+            </thead>
+            <tbody id="agents-body"></tbody>
+          </table>
+        </div>
+        <div class="admin-meta" id="agents-meta"></div>
+      </section>
+
+      <section id="feed-section" class="section-panel" hidden>
+        <div class="panel-header">
+          <h3><span>⚡</span> Recent requests</h3>
+        </div>
+        <ul class="admin-feed" id="requests-feed"></ul>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    (function () {
+      var STORAGE_KEY = 'agentpulse_admin_token';
+      var form = document.getElementById('token-form');
+      var input = document.getElementById('token-input');
+      var message = document.getElementById('message');
+
+      function esc(value) {
+        return String(value == null ? '' : value)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
+
+      function showMessage(text, kind) {
+        message.textContent = text;
+        message.className = 'admin-message ' + (kind || 'info');
+        message.hidden = false;
+      }
+
+      function hideData() {
+        document.getElementById('totals-section').hidden = true;
+        document.getElementById('agents-section').hidden = true;
+        document.getElementById('feed-section').hidden = true;
+      }
+
+      function getToken() {
+        return sessionStorage.getItem(STORAGE_KEY) || '';
+      }
+
+      function renderAgents(data) {
+        document.getElementById('total-agents').textContent = data.totals.agents;
+        document.getElementById('total-requests-today').textContent = data.totals.requests_today;
+        document.getElementById('total-requests-24h').textContent = data.totals.requests_24h;
+        document.getElementById('total-counted-today').textContent = data.totals.counted_today;
+
+        var body = document.getElementById('agents-body');
+        if (!data.agents.length) {
+          body.innerHTML = '<tr><td colspan="7">No agents registered yet.</td></tr>';
+        } else {
+          body.innerHTML = data.agents.map(function (a) {
+            var tops = (a.top_endpoints || []).map(function (t) {
+              return esc(t.path) + ' × ' + t.count;
+            }).join('<br>');
+            return '<tr>' +
+              '<td><strong>' + esc(a.agent_name) + '</strong><br><span class="top-eps">' + esc(a.operator_url) + '</span></td>' +
+              '<td class="num">' + a.requests_today + ' / ' + a.daily_quota + '</td>' +
+              '<td class="num">' + a.total_requests + '</td>' +
+              '<td class="num">' + a.quota_remaining + '</td>' +
+              '<td class="num">' + a.good_citizen_score + '</td>' +
+              '<td>' + (a.last_seen_at ? esc(a.last_seen_at) : 'never') + '</td>' +
+              '<td class="top-eps">' + (tops || '—') + '</td>' +
+              '</tr>';
+          }).join('');
+        }
+        document.getElementById('agents-meta').textContent = 'Updated ' + data.generated_at;
+        document.getElementById('totals-section').hidden = false;
+        document.getElementById('agents-section').hidden = false;
+      }
+
+      function renderRequests(data) {
+        var feed = document.getElementById('requests-feed');
+        if (!data.requests.length) {
+          feed.innerHTML = '<li>No requests logged yet.</li>';
+        } else {
+          feed.innerHTML = data.requests.map(function (r) {
+            var who = r.agent_name
+              ? '<span class="who">' + esc(r.agent_name) + '</span>'
+              : '<span class="anon">anonymous</span>';
+            var counted = r.counted
+              ? '<span class="counted">counted</span>'
+              : '<span class="uncounted">not counted</span>';
+            return '<li><span>' + esc(r.created_at) + '</span>' + who +
+              '<span>' + esc(r.method) + ' ' + esc(r.path) + '</span>' +
+              '<span>' + r.status_code + '</span>' + counted + '</li>';
+          }).join('');
+        }
+        document.getElementById('feed-section').hidden = false;
+      }
+
+      function load() {
+        var token = getToken();
+        if (!token) return;
+        var headers = { 'Authorization': 'Bearer ' + token };
+
+        fetch('/v1/admin/agents', { headers: headers }).then(function (res) {
+          if (res.status === 503) {
+            hideData();
+            showMessage('Admin is disabled on this server: the ADMIN_TOKEN environment variable is not set.', 'error');
+            return null;
+          }
+          if (res.status === 401) {
+            hideData();
+            showMessage('Invalid admin token.', 'error');
+            return null;
+          }
+          if (!res.ok) {
+            showMessage('Admin request failed with HTTP ' + res.status + '.', 'error');
+            return null;
+          }
+          return res.json();
+        }).then(function (data) {
+          if (data) {
+            message.hidden = true;
+            renderAgents(data);
+          }
+        }).catch(function () {
+          showMessage('Could not reach the admin API.', 'error');
+        });
+
+        fetch('/v1/admin/requests?limit=50', { headers: headers }).then(function (res) {
+          return res.ok ? res.json() : null;
+        }).then(function (data) {
+          if (data) renderRequests(data);
+        }).catch(function () { /* feed is best-effort */ });
+      }
+
+      form.addEventListener('submit', function (event) {
+        event.preventDefault();
+        var token = input.value.trim();
+        if (!token) return;
+        sessionStorage.setItem(STORAGE_KEY, token);
+        load();
+      });
+
+      document.getElementById('clear-token').addEventListener('click', function () {
+        sessionStorage.removeItem(STORAGE_KEY);
+        input.value = '';
+        hideData();
+        showMessage('Token forgotten. Enter the admin token to view usage.', 'info');
+      });
+
+      if (getToken()) {
+        input.value = getToken();
+        load();
+      }
+
+      // Auto-refresh every 30s while the page is open with a token set.
+      setInterval(function () {
+        if (getToken() && !document.hidden) load();
+      }, 30000);
+    })();
+  </script>
+</body>
+</html>

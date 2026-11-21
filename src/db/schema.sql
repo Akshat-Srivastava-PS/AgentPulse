@@ -169,3 +169,24 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
 );
 
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook ON webhook_deliveries(webhook_id, created_at DESC);
+
+-- 11. Request Log (owner visibility)
+-- One row per /v1/* request (except /v1/admin/*) and per MCP tools/call.
+-- agent_id / agent_name are NULL for anonymous and public reads; `counted`
+-- is 1 only when the call consumed daily quota (set by recordAgentUsage at
+-- the same place quota is consumed). Rows older than 7 days are pruned
+-- opportunistically on insert. In the runtime SQLite schema (src/db/index.js)
+-- `id` is INTEGER PRIMARY KEY AUTOINCREMENT and `counted` is INTEGER 0/1.
+CREATE TABLE IF NOT EXISTS request_log (
+    id INTEGER PRIMARY KEY,
+    agent_id VARCHAR(64), -- NULL = anonymous / public read
+    agent_name VARCHAR(128),
+    method VARCHAR(8) NOT NULL,
+    path VARCHAR(512) NOT NULL, -- actual request path, e.g. /v1/status/stripe
+    status_code INT NOT NULL,
+    counted BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_request_log_created ON request_log(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_request_log_agent ON request_log(agent_id, created_at DESC);

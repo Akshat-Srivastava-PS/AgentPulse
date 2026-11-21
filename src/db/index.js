@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import fs from 'node:fs';
 import { domainEvents } from '../engine/events.js';
+import { getRequestLogContext } from '../engine/requestContext.js';
 
 const DB_PATH = process.env.DB_PATH || path.resolve(process.cwd(), 'agentpulse.sqlite');
 
@@ -160,6 +161,20 @@ function initSchema(db) {
     );
 
     CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook ON webhook_deliveries(webhook_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS request_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      agent_id TEXT,
+      agent_name TEXT,
+      method TEXT NOT NULL,
+      path TEXT NOT NULL,
+      status_code INTEGER NOT NULL,
+      counted INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_request_log_created ON request_log(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_request_log_agent ON request_log(agent_id, created_at DESC);
   `);
 
   // Seed the services catalog on first boot. The catalog is configuration
@@ -558,6 +573,19 @@ export function recordAgentUsage(agentId, isEtag304 = false) {
         daily_quota = ?
     WHERE id = ?
   `).run(newScore, newQuota, agentId);
+
+  // Owner visibility: this call consumed one unit of quota, so flag the
+  // in-flight request's log context as counted (and attribute it, for the
+  // MCP api_key-argument path where the HTTP layer may not have resolved
+  // the agent yet). The 304 path above returns earlier and never counts.
+  const logCtx = getRequestLogContext();
+  if (logCtx) {
+    logCtx.counted = 1;
+    if (!logCtx.agentId) {
+      logCtx.agentId = agentId;
+      logCtx.agentName = agent.agent_name || logCtx.agentName || null;
+    }
+  }
 }
 
 /**
@@ -866,6 +894,107 @@ export function getWebhookDeliveries(webhookId, limit = 20) {
     created_at: row.created_at,
     delivered_at: row.delivered_at
   }));
+}
+
+// --- Request log & owner visibility (admin) ---
+
+/**
+ * Append one row to the request log. Called exactly once per logged
+ * request by the HTTP layer when the response ends. Never throws: a
+ * logging failure must not break the request that produced it.
+ */
+export function logRequest({ agent_id = null, agent_name = null, method, path: reqPath, status_code, counted = 0 }) {
+  try {
+    const db = getDb();
+    const now = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO request_log (agent_id, agent_name, method, path, status_code, counted, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(agent_id, agent_name, method, reqPath, status_code, counted ? 1 : 0, now);
+
+    // Opportunistic pruning (~1 in 100 inserts): keep the log bounded to
+    // the last 7 days without a background job.
+    if (Math.random() < 0.01) {
+      const cutoff = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
+      db.prepare('DELETE FROM request_log WHERE created_at < ?').run(cutoff);
+    }
+  } catch (err) {
+    console.error('[RequestLog] failed to record request:', err.message);
+  }
+}
+
+export function getAgentClientById(id) {
+  const db = getDb();
+  return db.prepare('SELECT * FROM agent_clients WHERE id = ?').get(id) || null;
+}
+
+export function getRecentRequestLog(limit = 50) {
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT agent_name, method, path, status_code, counted, created_at
+    FROM request_log
+    ORDER BY id DESC
+    LIMIT ?
+  `).all(limit);
+  return rows.map(row => ({
+    agent_name: row.agent_name,
+    method: row.method,
+    path: row.path,
+    status_code: row.status_code,
+    counted: row.counted === 1,
+    created_at: row.created_at
+  }));
+}
+
+/**
+ * Owner dashboard payload: fleet totals plus one row per registered agent
+ * (quota state from the same helper the enforcement path uses, usage
+ * aggregates from the request log), sorted by requests_today desc.
+ */
+export function getAdminOverview() {
+  const db = getDb();
+  const now = new Date();
+  const todayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+  const since24h = new Date(now.getTime() - 24 * 3600 * 1000).toISOString();
+
+  const totals = {
+    agents: db.prepare('SELECT count(*) as count FROM agent_clients').get().count,
+    requests_today: db.prepare('SELECT count(*) as count FROM request_log WHERE created_at >= ?').get(todayStart).count,
+    requests_24h: db.prepare('SELECT count(*) as count FROM request_log WHERE created_at >= ?').get(since24h).count,
+    counted_today: db.prepare('SELECT count(*) as count FROM request_log WHERE counted = 1 AND created_at >= ?').get(todayStart).count
+  };
+
+  const totalStmt = db.prepare('SELECT count(*) as count FROM request_log WHERE agent_id = ?');
+  const lastSeenStmt = db.prepare('SELECT MAX(created_at) as last_seen FROM request_log WHERE agent_id = ?');
+  const topStmt = db.prepare(`
+    SELECT path, count(*) as count FROM request_log
+    WHERE agent_id = ?
+    GROUP BY path
+    ORDER BY count DESC, path ASC
+    LIMIT 3
+  `);
+
+  const agents = db.prepare('SELECT * FROM agent_clients ORDER BY created_at ASC').all().map(row => {
+    const state = getAgentQuotaState(row.id);
+    return {
+      id: row.id,
+      agent_name: row.agent_name,
+      operator_url: row.operator_url,
+      tier: row.tier,
+      daily_quota: row.daily_quota,
+      requests_today: state ? state.used : row.requests_today,
+      quota_remaining: state ? state.remaining : Math.max(0, row.daily_quota - row.requests_today),
+      good_citizen_score: row.good_citizen_score,
+      total_requests: totalStmt.get(row.id).count,
+      last_seen_at: lastSeenStmt.get(row.id).last_seen || null,
+      top_endpoints: topStmt.all(row.id).map(t => ({ path: t.path, count: t.count })),
+      created_at: row.created_at
+    };
+  });
+
+  agents.sort((a, b) => b.requests_today - a.requests_today);
+
+  return { totals, agents };
 }
 
 export function getSystemMetrics() {

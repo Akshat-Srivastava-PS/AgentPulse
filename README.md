@@ -239,6 +239,21 @@ curl -X POST http://localhost:3000/v1/preflight \
   -d '{"dependencies": ["stripe", "openai"]}'
 ```
 
+### Owner visibility
+
+The owner can see **which agents are using the service and how many requests each one makes**. Every `/v1/*` request (except the admin endpoints themselves) and every MCP `tools/call` is written to a `request_log` table — identified calls with the agent's id and name, anonymous/public reads with a null agent — with a `counted` flag set at the exact place quota is consumed, so the log and the quota counter never disagree. Rows older than 7 days are pruned opportunistically.
+
+Two owner-only endpoints expose it:
+
+| Endpoint | Returns |
+| :--- | :--- |
+| `GET /v1/admin/agents` | Fleet totals (agents, requests today, requests in the last 24h, counted requests today) plus one row per agent: requests today, quota remaining, Good Citizen score, lifetime logged requests, last-seen time, and its top 3 endpoints. |
+| `GET /v1/admin/requests?limit=50` | The most recent request-log rows (limit clamped to 1–200). |
+
+There is also a human page at **`GET /admin`**: paste the admin token (kept only in the tab's session storage) and it renders the totals, the per-agent table, and a recent-requests feed, auto-refreshing every 30 seconds.
+
+Access is controlled by the **`ADMIN_TOKEN`** environment variable: send it as `Authorization: Bearer <ADMIN_TOKEN>`. When `ADMIN_TOKEN` is unset or empty, both endpoints return `503 { "error": "admin_disabled" }` — the admin surface is off by default, and it is never advertised in `llms.txt` or the OpenAPI document agents read.
+
 ### Configuration
 
 | Env var | Default | Purpose |
@@ -251,6 +266,7 @@ curl -X POST http://localhost:3000/v1/preflight \
 | `SPEC_SOURCES_JSON` | built-in registry | Override slug → OpenAPI spec URL map. |
 | `WEBHOOK_RETRY_DELAYS_MS` | `1000,5000` | Webhook backoff delays (attempts = delays + 1). |
 | `WEBHOOK_TIMEOUT_MS` | `5000` | Per-attempt webhook delivery timeout. |
+| `ADMIN_TOKEN` | *(unset)* | Bearer token for the owner-visibility endpoints (`/v1/admin/*`) and the `/admin` page. Unset = admin API disabled (503). |
 
 ### Tests
 
@@ -271,6 +287,7 @@ Defined in `src/db/schema.sql` (SQLite, WAL mode):
 - **`agent_webhooks`** — agent, URL, event/service filters, signing secret, active flag.
 - **`webhook_deliveries`** — per-attempt delivery log: exact signed payload, status, attempts, last HTTP status/error.
 - **`synthetic_probes`** / **`outage_signals`** — probe results and crowdsourced telemetry.
+- **`request_log`** — one row per API/MCP call for owner visibility: agent (null when anonymous), method, path, status, quota-counted flag, timestamp; pruned to 7 days.
 
 ## Project layout
 

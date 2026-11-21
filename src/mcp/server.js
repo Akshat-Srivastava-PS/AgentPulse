@@ -1,6 +1,7 @@
 import { evaluatePreflight, evaluateManifestImpact } from '../engine/diffEngine.js';
 import { getService, getActiveIncidents, getBreakingChanges, recordOutageSignal, getAgentByApiKey, recordAgentUsage, getAgentQuotaState } from '../db/index.js';
 import { formatCompactStatusPayload } from '../engine/normalizer.js';
+import { getRequestLogContext } from '../engine/requestContext.js';
 
 /**
  * Resolves the calling agent's identity for manifest-aware tools.
@@ -42,6 +43,14 @@ function mcpRateLimitHeaders(agent) {
 function quotaGateForToolCall(req, args) {
   const agent = resolveMcpAgent(req, args);
   if (!agent) return { agent: null, headers: {} };
+  // Owner visibility: attribute the in-flight request to this agent (the
+  // api_key-argument path resolves identity only here, not in the HTTP
+  // layer). recordAgentUsage below flags the request as counted.
+  const logCtx = getRequestLogContext();
+  if (logCtx) {
+    logCtx.agentId = agent.id;
+    logCtx.agentName = agent.agent_name;
+  }
   const state = getAgentQuotaState(agent.id);
   if (state && !state.allowed) {
     return { agent, exceeded: state, headers: {} };
