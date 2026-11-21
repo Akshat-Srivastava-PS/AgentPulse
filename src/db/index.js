@@ -341,6 +341,204 @@ function seedServiceCatalog(db) {
       latency_ms: 0,
       uptime_percentage: 99.95,
       updated_at: now
+    },
+    {
+      slug: 'twilio',
+      name: 'Twilio',
+      category: 'communications',
+      current_status: 'operational',
+      provider_status_page: 'https://status.twilio.com',
+      healthcheck_url: 'https://api.twilio.com',
+      latency_ms: 0,
+      uptime_percentage: 99.95,
+      updated_at: now
+    },
+    {
+      slug: 'discord',
+      name: 'Discord',
+      category: 'communications',
+      current_status: 'operational',
+      provider_status_page: 'https://discordstatus.com',
+      healthcheck_url: 'https://discord.com/api/v10',
+      latency_ms: 0,
+      uptime_percentage: 99.95,
+      updated_at: now
+    },
+    {
+      slug: 'sentry',
+      name: 'Sentry',
+      category: 'observability',
+      current_status: 'operational',
+      provider_status_page: 'https://status.sentry.io',
+      healthcheck_url: 'https://sentry.io',
+      latency_ms: 0,
+      uptime_percentage: 99.95,
+      updated_at: now
+    },
+    {
+      slug: 'mongodb',
+      name: 'MongoDB Atlas',
+      category: 'database',
+      current_status: 'operational',
+      provider_status_page: 'https://status.mongodb.com',
+      healthcheck_url: 'https://cloud.mongodb.com',
+      latency_ms: 0,
+      uptime_percentage: 99.95,
+      updated_at: now
+    },
+    {
+      slug: 'digitalocean',
+      name: 'DigitalOcean',
+      category: 'cloud_infra',
+      current_status: 'operational',
+      provider_status_page: 'https://status.digitalocean.com',
+      healthcheck_url: 'https://api.digitalocean.com/v2',
+      latency_ms: 0,
+      uptime_percentage: 99.95,
+      updated_at: now
+    },
+    {
+      slug: 'circleci',
+      name: 'CircleCI',
+      category: 'dev_tools',
+      current_status: 'operational',
+      provider_status_page: 'https://status.circleci.com',
+      healthcheck_url: 'https://circleci.com/api/v2',
+      latency_ms: 0,
+      uptime_percentage: 99.95,
+      updated_at: now
+    },
+    {
+      slug: 'bitbucket',
+      name: 'Atlassian Bitbucket',
+      category: 'dev_tools',
+      current_status: 'operational',
+      provider_status_page: 'https://bitbucket.status.atlassian.com',
+      healthcheck_url: 'https://api.bitbucket.org/2.0',
+      latency_ms: 0,
+      uptime_percentage: 99.95,
+      updated_at: now
+    },
+    {
+      slug: 'zoom',
+      name: 'Zoom',
+      category: 'communications',
+      current_status: 'operational',
+      provider_status_page: 'https://status.zoom.us',
+      healthcheck_url: 'https://api.zoom.us/v2',
+      latency_ms: 0,
+      uptime_percentage: 99.95,
+      updated_at: now
+    },
+    {
+      slug: 'cohere',
+      name: 'Cohere API',
+      category: 'ai_models',
+      current_status: 'operational',
+      provider_status_page: 'https://status.cohere.com',
+      healthcheck_url: 'https://api.cohere.com/v2',
+      latency_ms: 0,
+      uptime_percentage: 99.95,
+      updated_at: now
+    },
+    {
+      slug: 'clerk',
+      name: 'Clerk',
+      category: 'dev_tools',
+      current_status: 'operational',
+      provider_status_page: 'https://status.clerk.com',
+      healthcheck_url: 'https://api.clerk.com/v1',
+      latency_ms: 0,
+      uptime_percentage: 99.95,
+      updated_at: now
+    },
+    {
+      slug: 'render',
+      name: 'Render',
+      category: 'hosting',
+      current_status: 'operational',
+      provider_status_page: 'https://status.render.com',
+      healthcheck_url: 'https://api.render.com/v1',
+      latency_ms: 0,
+      uptime_percentage: 99.95,
+      updated_at: now
+    },
+    {
+      slug: 'flyio',
+      name: 'Fly.io',
+      category: 'hosting',
+      current_status: 'operational',
+      provider_status_page: 'https://status.flyio.net',
+      healthcheck_url: 'https://api.fly.io',
+      latency_ms: 0,
+      uptime_percentage: 99.95,
+      updated_at: now
+    },
+    {
+      slug: 'snowflake',
+      name: 'Snowflake',
+      category: 'database',
+      current_status: 'operational',
+      provider_status_page: 'https://status.snowflake.com',
+      healthcheck_url: 'https://status.snowflake.com',
+      latency_ms: 0,
+      uptime_percentage: 99.95,
+      updated_at: now
+    },
+    {
+      slug: 'elastic',
+      name: 'Elastic Cloud',
+      category: 'observability',
+      current_status: 'operational',
+      provider_status_page: 'https://status.elastic.co',
+      healthcheck_url: 'https://cloud.elastic.co',
+      latency_ms: 0,
+      uptime_percentage: 99.95,
+      updated_at: now
+    },
+    {
+      slug: 'postman',
+      name: 'Postman',
+      category: 'dev_tools',
+      current_status: 'operational',
+      provider_status_page: 'https://status.postman.com',
+      healthcheck_url: 'https://api.getpostman.com',
+      latency_ms: 0,
+      uptime_percentage: 99.95,
+      updated_at: now
+    },
+    {
+      slug: 'shopify',
+      name: 'Shopify',
+      category: 'payments',
+      current_status: 'operational',
+      provider_status_page: 'https://www.shopifystatus.com',
+      healthcheck_url: 'https://www.shopify.com',
+      latency_ms: 0,
+      uptime_percentage: 99.95,
+      updated_at: now
+    },
+    {
+      slug: 'elevenlabs',
+      name: 'ElevenLabs',
+      category: 'ai_models',
+      current_status: 'operational',
+      provider_status_page: 'https://status.elevenlabs.io',
+      healthcheck_url: 'https://api.elevenlabs.io/v1',
+      latency_ms: 0,
+      uptime_percentage: 99.95,
+      updated_at: now
+    },
+    {
+      slug: 'convex',
+      name: 'Convex',
+      category: 'database',
+      current_status: 'operational',
+      provider_status_page: 'https://status.convex.dev',
+      healthcheck_url: 'https://api.convex.dev',
+      latency_ms: 0,
+      uptime_percentage: 99.95,
+      updated_at: now
     }
   ];
 

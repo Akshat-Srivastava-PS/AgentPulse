@@ -44,8 +44,27 @@ export const STATUSPAGE_REGISTRY = {
   resend: 'https://status.resend.com',
   npm: 'https://status.npmjs.org',
   pinecone: 'https://status.pinecone.io',
-  // Not in the service catalog yet; skipped until the service exists.
-  twilio: 'https://status.twilio.com'
+  twilio: 'https://status.twilio.com',
+  // Catalog expansion (Nov 2026): every base below was verified live —
+  // <base>/api/v2/summary.json returned valid Statuspage summary JSON
+  // before the vendor was added.
+  discord: 'https://discordstatus.com',
+  sentry: 'https://status.sentry.io',
+  mongodb: 'https://status.mongodb.com',
+  digitalocean: 'https://status.digitalocean.com',
+  circleci: 'https://status.circleci.com',
+  bitbucket: 'https://bitbucket.status.atlassian.com',
+  zoom: 'https://status.zoom.us',
+  cohere: 'https://status.cohere.com',
+  clerk: 'https://status.clerk.com',
+  render: 'https://status.render.com',
+  flyio: 'https://status.flyio.net',
+  snowflake: 'https://status.snowflake.com',
+  elastic: 'https://status.elastic.co',
+  postman: 'https://status.postman.com',
+  shopify: 'https://www.shopifystatus.com',
+  elevenlabs: 'https://status.elevenlabs.io',
+  convex: 'https://status.convex.dev'
 };
 
 export function getStatuspageRegistry() {

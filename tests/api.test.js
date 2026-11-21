@@ -215,7 +215,7 @@ test('10. Catalog & Incidents: GET /v1/services and GET /v1/incidents', async ()
   const servicesRes = await dispatchRequest({ url: '/v1/services' });
   assert.strictEqual(servicesRes.status, 200);
   const servicesData = await servicesRes.json();
-  assert.ok(servicesData.count >= 12);
+  assert.strictEqual(servicesData.count, 30);
 
   const incRes = await dispatchRequest({ url: '/v1/incidents' });
   assert.strictEqual(incRes.status, 200);
@@ -269,7 +269,7 @@ test('12. Metrics: GET /v1/metrics returns system health and token economy metri
   const res = await dispatchRequest({ url: '/v1/metrics' });
   assert.strictEqual(res.status, 200);
   const data = await res.json();
-  assert.ok(data.services.total >= 12);
+  assert.strictEqual(data.services.total, 30);
   assert.ok(data.estimated_tokens_saved > 0);
 });
 

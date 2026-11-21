@@ -101,7 +101,7 @@ flowchart TD
 
 Both network workers fail gracefully: a failed fetch or parse is logged and skipped, never crashing the server.
 
-**Tracked vendors** (status): OpenAI, Anthropic, GitHub, Vercel, Cloudflare, Supabase, Datadog, Resend, npm, Pinecone — plus Stripe and Twilio behind the same generic Statuspage mechanism (their feeds are polled when the payload shape matches). **Tracked specs** (diff): Stripe and GitHub publish JSON specs; OpenAI's canonical spec is YAML and is skipped until a JSON mirror is configured via `SPEC_SOURCES_JSON`.
+**Tracked vendors** (status, 30 total): OpenAI, Anthropic, GitHub, AWS, Vercel, Cloudflare, Supabase, Datadog, Resend, npm, Pinecone, Twilio, Discord, Sentry, MongoDB Atlas, DigitalOcean, CircleCI, Bitbucket, Zoom, Cohere, Clerk, Render, Fly.io, Snowflake, Elastic Cloud, Postman, Shopify, ElevenLabs, Convex — plus Stripe behind the same generic Statuspage mechanism (its feed is polled when the payload shape matches). Every Statuspage-backed vendor above was added only after its live `<base>/api/v2/summary.json` feed was fetched and verified to return valid Statuspage summary JSON. **Tracked specs** (diff): Stripe and GitHub publish JSON specs; OpenAI's canonical spec is YAML and is skipped until a JSON mirror is configured via `SPEC_SOURCES_JSON`.
 
 ### 2. The engine — turning noise into verdicts
 

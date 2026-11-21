@@ -17,7 +17,25 @@ const FALLBACK_SERVICES = [
   { slug: 'resend', name: 'Resend Transactional Email', category: 'communications', current_status: 'operational', latency_ms: 73, etag: 'W/"b6352fbcf76f5512"' },
   { slug: 'datadog', name: 'Datadog Observability', category: 'observability', current_status: 'operational', latency_ms: 76, etag: 'W/"3d7c151a3f14ba18"' },
   { slug: 'pinecone', name: 'Pinecone Vector DB', category: 'database', current_status: 'operational', latency_ms: 267, etag: 'W/"9869d9a8402404c7"' },
-  { slug: 'npm', name: 'npm Package Registry', category: 'dev_tools', current_status: 'operational', latency_ms: 57, etag: 'W/"eb2a7b8264fde523"' }
+  { slug: 'npm', name: 'npm Package Registry', category: 'dev_tools', current_status: 'operational', latency_ms: 57, etag: 'W/"eb2a7b8264fde523"' },
+  { slug: 'twilio', name: 'Twilio', category: 'communications', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
+  { slug: 'discord', name: 'Discord', category: 'communications', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
+  { slug: 'sentry', name: 'Sentry', category: 'observability', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
+  { slug: 'mongodb', name: 'MongoDB Atlas', category: 'database', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
+  { slug: 'digitalocean', name: 'DigitalOcean', category: 'cloud_infra', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
+  { slug: 'circleci', name: 'CircleCI', category: 'dev_tools', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
+  { slug: 'bitbucket', name: 'Atlassian Bitbucket', category: 'dev_tools', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
+  { slug: 'zoom', name: 'Zoom', category: 'communications', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
+  { slug: 'cohere', name: 'Cohere API', category: 'ai_models', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
+  { slug: 'clerk', name: 'Clerk', category: 'dev_tools', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
+  { slug: 'render', name: 'Render', category: 'hosting', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
+  { slug: 'flyio', name: 'Fly.io', category: 'hosting', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
+  { slug: 'snowflake', name: 'Snowflake', category: 'database', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
+  { slug: 'elastic', name: 'Elastic Cloud', category: 'observability', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
+  { slug: 'postman', name: 'Postman', category: 'dev_tools', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
+  { slug: 'shopify', name: 'Shopify', category: 'payments', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
+  { slug: 'elevenlabs', name: 'ElevenLabs', category: 'ai_models', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
+  { slug: 'convex', name: 'Convex', category: 'database', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' }
 ];
 
 document.addEventListener('DOMContentLoaded', async () => {
