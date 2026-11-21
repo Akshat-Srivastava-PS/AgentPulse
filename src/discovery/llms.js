@@ -15,15 +15,19 @@ export function generateLlmsTxt(origin = 'https://agentpulse.dev') {
 ## Essential Preflight & Status Tools
 - [Batch Preflight Check](${origin}/v1/preflight): POST dependency list (e.g. ["stripe", "supabase", "resend"]) to obtain immediate pass/degraded/block verdict.
 - [Service Status Query](${origin}/v1/status/stripe): GET compact health status, active incidents, affected scope, and prescriptive agent_hint (< 150 tokens).
-- [Delta Feed of Breaking Changes](${origin}/v1/changes): GET recent SDK deprecations and schema mutations since timestamp checkpoint.
+- [Delta Feed of Breaking Changes](${origin}/v1/changes): GET recent SDK deprecations and schema mutations since timestamp checkpoint. Add \`?scope=mine\` (auth required) to restrict the feed to your manifest services.
 - [All Monitored Services](${origin}/v1/services): Full catalog of tracked cloud providers, APIs, and registries.
 - [Live Incident Feed](${origin}/v1/incidents): Active incidents with severity ratings and mitigation hints.
 
+## My Dependency Manifest & Affected Answers (Auth Required)
+- [Dependency Manifest](${origin}/v1/agents/me/dependencies): \`PUT\` replaces your stored manifest: \`{"dependencies": [{"service": "stripe", "package": "stripe", "version": "14.5.0"}]}\` (package/version optional; unknown slugs rejected with 400). \`GET\` returns it. Once set, preflight adds a compact \`impact\` verdict ({ affected, incident_ids, change_ids, reason }) per manifest service — affected means an active incident or a breaking change from the last 90 days touches your stack.
+
 ## Stateless HTTP MCP Server
-- [Stateless MCP Endpoint](${origin}/mcp): Streamable Model Context Protocol endpoint supporting both JSON-RPC 2.0 and Mcp-Method / Mcp-Name header routing.
-  - \`check_dependency_health\`: Mid-debugging stack health preflight.
+- [Stateless MCP Endpoint](${origin}/mcp): Streamable Model Context Protocol endpoint supporting both JSON-RPC 2.0 and Mcp-Method / Mcp-Name header routing. Send \`Authorization: Bearer <api_key>\` to identify your agent.
+  - \`check_dependency_health\`: Mid-debugging stack health preflight (manifest-aware when authenticated).
   - \`lookup_breaking_changes\`: Deprecation and schema diff analyzer.
   - \`get_service_status\`: Instant single-service health check.
+  - \`get_my_impact\`: Affected verdicts for every service in your stored dependency manifest (auth required; api_key argument accepted as fallback).
   - \`report_outage_signal\`: Crowdsource early 5xx anomaly detection.
 
 ## Good Citizen Protocol
@@ -126,6 +130,24 @@ Compact (< 150 token) response:
 
 ### Delta Feed (\`GET /v1/changes?since={iso_ts}\`)
 Returns API/SDK deprecations and schema mutations since the agent's last run.
+Add \`&scope=mine\` with your \`Authorization: Bearer <KEY>\` header to receive only changes for services in your dependency manifest (401 without a valid key).
+
+### Dependency Manifest & Affected Answers (\`PUT/GET /v1/agents/me/dependencies\`)
+Register once, then declare the stack your code actually depends on:
+\`\`\`bash
+curl -X PUT "${origin}/v1/agents/me/dependencies" \\
+  -H "Authorization: Bearer <KEY>" \\
+  -H "Content-Type: application/json" \\
+  -d '{"dependencies": [{"service": "stripe", "package": "stripe", "version": "14.5.0"}, {"service": "openai"}]}'
+\`\`\`
+PUT is replace-all; slugs are validated against the monitored catalog (unknown slug → 400 naming the slug). \`GET\` on the same path returns the stored manifest.
+
+With a manifest in place:
+- \`POST /v1/preflight\` (authenticated) adds \`impact: { affected, incident_ids, change_ids, reason }\` to each requested service that is in your manifest, plus a top-level \`affected_count\`.
+- \`GET /v1/changes?scope=mine\` filters the delta feed to your services.
+- The MCP tool \`get_my_impact\` returns the verdict for your whole manifest in one call.
+
+A dependency is **affected** when its service has any active incident, or any breaking change detected in the last 90 days.
 
 ## 4. MCP (Model Context Protocol) Setup
 Add AgentPulse to your agent's MCP configuration:

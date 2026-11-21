@@ -13,6 +13,7 @@ export function getDb() {
     dbInstance.exec('PRAGMA journal_mode = WAL;');
     dbInstance.exec('PRAGMA foreign_keys = ON;');
     dbInstance.exec('PRAGMA synchronous = NORMAL;');
+    dbInstance.exec('PRAGMA busy_timeout = 5000;');
     initSchema(dbInstance);
   }
   return dbInstance;
@@ -112,12 +113,37 @@ function initSchema(db) {
     );
 
     CREATE INDEX IF NOT EXISTS idx_spec_snapshots_lookup ON spec_snapshots(service_slug, spec_url, fetched_at DESC);
+
+    CREATE TABLE IF NOT EXISTS agent_dependencies (
+      id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL,
+      service_slug TEXT NOT NULL,
+      package_name TEXT,
+      package_version TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (agent_id) REFERENCES agent_clients(id) ON DELETE CASCADE,
+      FOREIGN KEY (service_slug) REFERENCES services(slug) ON DELETE CASCADE,
+      UNIQUE (agent_id, service_slug)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_dependencies_agent ON agent_dependencies(agent_id);
   `);
 
   // Check if initial services seeded
   const countRow = db.prepare('SELECT count(*) as count FROM services').get();
   if (countRow.count === 0) {
-    seedInitialData(db);
+    try {
+      seedInitialData(db);
+    } catch (err) {
+      // Concurrent first boot (e.g. parallel test processes or clustered
+      // workers opening the same fresh database): another process may seed
+      // at the same time and win the race. The seed data is identical, so
+      // losing is harmless — but only swallow the error if seeding did in
+      // fact happen; a genuinely empty database means a real failure.
+      const after = db.prepare('SELECT count(*) as count FROM services').get();
+      if (after.count === 0) throw err;
+    }
   }
 }
 
@@ -597,6 +623,82 @@ export function saveSpecSnapshot({ service_slug, spec_url, spec_hash, spec_json 
   `).run(id, service_slug, spec_url, spec_hash, spec_json, now);
 
   return db.prepare('SELECT * FROM spec_snapshots WHERE id = ?').get(id);
+}
+
+// --- Per-agent dependency manifests (Step 2: "affected code" answers) ---
+
+function formatDependency(row) {
+  if (!row) return null;
+  return {
+    service: row.service_slug,
+    package: row.package_name || null,
+    version: row.package_version || null,
+    created_at: row.created_at,
+    updated_at: row.updated_at
+  };
+}
+
+export function getAgentDependencies(agentId) {
+  const db = getDb();
+  const rows = db.prepare('SELECT * FROM agent_dependencies WHERE agent_id = ? ORDER BY service_slug ASC').all(agentId);
+  return rows.map(formatDependency);
+}
+
+/**
+ * Replace-all semantics: the agent's manifest becomes exactly `dependencies`.
+ * Entries are normalized (slug lowercased) and deduped by slug (last wins).
+ * Callers are responsible for validating slugs against the services table.
+ */
+export function setAgentDependencies(agentId, dependencies = []) {
+  const db = getDb();
+  const now = new Date().toISOString();
+
+  const bySlug = new Map();
+  for (const dep of dependencies || []) {
+    if (!dep) continue;
+    const slug = String(dep.service || dep.service_slug || '').trim().toLowerCase();
+    if (!slug) continue;
+    const pkg = dep.package ?? dep.package_name ?? null;
+    const ver = dep.version ?? dep.package_version ?? null;
+    bySlug.set(slug, {
+      service_slug: slug,
+      package_name: pkg !== null && pkg !== undefined && String(pkg).trim() !== '' ? String(pkg).trim() : null,
+      package_version: ver !== null && ver !== undefined && String(ver).trim() !== '' ? String(ver).trim() : null
+    });
+  }
+
+  db.exec('BEGIN');
+  try {
+    db.prepare('DELETE FROM agent_dependencies WHERE agent_id = ?').run(agentId);
+    const insert = db.prepare(`
+      INSERT INTO agent_dependencies (id, agent_id, service_slug, package_name, package_version, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const dep of bySlug.values()) {
+      insert.run(
+        `dep_${crypto.randomUUID().substring(0, 12)}`,
+        agentId,
+        dep.service_slug,
+        dep.package_name,
+        dep.package_version,
+        now,
+        now
+      );
+    }
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+
+  return getAgentDependencies(agentId);
+}
+
+export function deleteAgentDependencies(agentId) {
+  const db = getDb();
+  const removed = getAgentDependencies(agentId).length;
+  db.prepare('DELETE FROM agent_dependencies WHERE agent_id = ?').run(agentId);
+  return removed;
 }
 
 export function getSystemMetrics() {

@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { getService, getActiveIncidents, getBreakingChanges, getAllServices } from '../db/index.js';
+import { getService, getActiveIncidents, getBreakingChanges, getAllServices, getAgentDependencies } from '../db/index.js';
 import { formatCompactStatusPayload, estimateTokenCount } from './normalizer.js';
 
 export function computeIncidentFingerprint(serviceSlug, scope, summary) {
@@ -7,11 +7,68 @@ export function computeIncidentFingerprint(serviceSlug, scope, summary) {
   return crypto.createHash('sha256').update(norm).digest('hex').substring(0, 16);
 }
 
+// --- "Affected code" impact evaluation (Step 2) ---
+
+/** A breaking change counts against a dependency for 90 days after detection. */
+export const BREAKING_CHANGE_IMPACT_WINDOW_DAYS = 90;
+
+function truncate(text, max = 90) {
+  const s = String(text || '').trim();
+  return s.length > max ? s.substring(0, max - 3) + '...' : s;
+}
+
+/**
+ * Compact affected verdict for one service: affected iff it has any active
+ * incident OR any breaking change detected within the impact window.
+ * Returns matching ids plus a one-line reason (kept short for token budget).
+ */
+export function evaluateServiceImpact(serviceSlug) {
+  const slug = String(serviceSlug || '').trim().toLowerCase();
+  const incidents = getActiveIncidents(slug);
+  const windowStart = new Date(Date.now() - BREAKING_CHANGE_IMPACT_WINDOW_DAYS * 24 * 3600 * 1000).toISOString();
+  const changes = getBreakingChanges(slug, windowStart);
+
+  const incident_ids = incidents.map(i => i.id);
+  const change_ids = changes.map(c => c.id);
+  const affected = incident_ids.length > 0 || change_ids.length > 0;
+
+  let reason = `No active incidents or breaking changes in the last ${BREAKING_CHANGE_IMPACT_WINDOW_DAYS} days.`;
+  if (incidents.length > 0) {
+    reason = `Active ${incidents[0].severity} incident ${incidents[0].id} on ${slug}: ${truncate(incidents[0].agent_summary)}`;
+  } else if (changes.length > 0) {
+    reason = `Breaking change ${changes[0].id} (${changes[0].change_type}) detected ${String(changes[0].detected_at).substring(0, 10)}: ${truncate(changes[0].diff_summary)}`;
+  }
+
+  return { affected, incident_ids, change_ids, reason };
+}
+
+/**
+ * Impact verdicts for every entry in an agent's stored dependency manifest.
+ */
+export function evaluateManifestImpact(agentId) {
+  const manifest = getAgentDependencies(agentId);
+  const dependencies = manifest.map(dep => ({
+    ...dep,
+    impact: evaluateServiceImpact(dep.service)
+  }));
+  const affectedDeps = dependencies.filter(d => d.impact.affected);
+
+  return {
+    manifest_count: dependencies.length,
+    affected_count: affectedDeps.length,
+    affected_services: affectedDeps.map(d => d.service),
+    dependencies
+  };
+}
+
 /**
  * Evaluates dependency health for batch preflight check
- * Used by POST /v1/preflight and MCP check_dependency_health tool
+ * Used by POST /v1/preflight and MCP check_dependency_health tool.
+ * When `agentId` is provided and that agent has a stored dependency manifest,
+ * each requested service that is in the manifest gains a compact `impact`
+ * (affected) verdict; unauthenticated/no-manifest calls are unchanged.
  */
-export function evaluatePreflight(dependencies = []) {
+export function evaluatePreflight(dependencies = [], agentId = null) {
   if (!Array.isArray(dependencies) || dependencies.length === 0) {
     return {
       verdict: 'pass',
@@ -86,6 +143,25 @@ export function evaluatePreflight(dependencies = []) {
     recommendation,
     services: serviceResults
   };
+
+  // Step 2 enrichment: for an authenticated caller with a stored manifest,
+  // attach an `impact` (affected) verdict to each requested service that is
+  // in the manifest. Compact by design — ids + one-line reason only.
+  if (agentId) {
+    const manifest = getAgentDependencies(agentId);
+    if (manifest.length > 0) {
+      const manifestSlugs = new Set(manifest.map(d => d.service));
+      let affectedCount = 0;
+      for (const slug of normalizedSlugs) {
+        const entry = serviceResults[slug];
+        if (entry && entry.tracked && manifestSlugs.has(slug)) {
+          entry.impact = evaluateServiceImpact(slug);
+          if (entry.impact.affected) affectedCount++;
+        }
+      }
+      responsePayload.affected_count = affectedCount;
+    }
+  }
 
   // Estimate tokens to ensure preflight returns sub-250 token payload
   responsePayload._meta = {

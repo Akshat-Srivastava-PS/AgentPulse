@@ -112,3 +112,20 @@ CREATE INDEX IF NOT EXISTS idx_spec_snapshots_lookup ON spec_snapshots(service_s
 -- Note on external incidents: Statuspage-sourced incidents keep their
 -- deterministic primary key `sp_<service_slug>_<statuspage_incident_id>` in the
 -- incidents table above; that key is the dedupe mechanism (no extra column).
+
+-- 8. Agent Dependency Manifests (Step 2: per-agent "affected code" answers)
+-- One row per (agent, service) the agent depends on. Written with replace-all
+-- semantics via PUT /v1/agents/me/dependencies. package_name / package_version
+-- are nullable: an agent may track a service without pinning an SDK package.
+CREATE TABLE IF NOT EXISTS agent_dependencies (
+    id VARCHAR(64) PRIMARY KEY,
+    agent_id VARCHAR(64) NOT NULL REFERENCES agent_clients(id) ON DELETE CASCADE,
+    service_slug VARCHAR(64) NOT NULL REFERENCES services(slug) ON DELETE CASCADE,
+    package_name VARCHAR(255), -- e.g. npm/pip package name ("stripe", "openai")
+    package_version VARCHAR(64), -- e.g. "14.5.0"
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (agent_id, service_slug)
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_dependencies_agent ON agent_dependencies(agent_id);

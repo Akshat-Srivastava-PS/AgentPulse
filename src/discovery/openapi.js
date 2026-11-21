@@ -12,6 +12,15 @@ export function generateOpenApiSchema(origin = 'https://agentpulse.dev') {
         description: 'AgentPulse Edge Server'
       }
     ],
+    components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          description: 'AgentPulse API key issued by POST /v1/agents/register (agp_live_...).'
+        }
+      }
+    },
     paths: {
       '/llms.txt': {
         get: {
@@ -65,6 +74,82 @@ export function generateOpenApiSchema(origin = 'https://agentpulse.dev') {
               }
             },
             '400': { description: 'Missing agent_name or invalid operator_url' }
+          }
+        }
+      },
+      '/v1/agents/me/dependencies': {
+        get: {
+          summary: 'Get My Dependency Manifest',
+          description: 'Returns the authenticated agent\'s stored dependency manifest (services + optional package/version pins) used for "affected code" answers.',
+          security: [{ bearerAuth: [] }],
+          responses: {
+            '200': {
+              description: 'The caller\'s dependency manifest',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      agent_id: { type: 'string' },
+                      count: { type: 'integer' },
+                      dependencies: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            service: { type: 'string', example: 'stripe' },
+                            package: { type: ['string', 'null'], example: 'stripe' },
+                            version: { type: ['string', 'null'], example: '14.5.0' },
+                            created_at: { type: 'string', format: 'date-time' },
+                            updated_at: { type: 'string', format: 'date-time' }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            '401': { description: 'Missing or invalid API key' }
+          }
+        },
+        put: {
+          summary: 'Replace My Dependency Manifest',
+          description: 'Replace-all update of the authenticated agent\'s dependency manifest. Service slugs are validated against the monitored catalog; an unknown slug rejects the whole update with 400. An empty array clears the manifest.',
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    dependencies: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          service: { type: 'string', example: 'stripe' },
+                          package: { type: 'string', example: 'stripe' },
+                          version: { type: 'string', example: '14.5.0' }
+                        },
+                        required: ['service']
+                      },
+                      example: [
+                        { service: 'stripe', package: 'stripe', version: '14.5.0' },
+                        { service: 'openai' }
+                      ]
+                    }
+                  },
+                  required: ['dependencies']
+                }
+              }
+            }
+          },
+          responses: {
+            '200': { description: 'Manifest stored; returns the stored manifest' },
+            '400': { description: 'Malformed body or unknown service slug (see unknown_service field)' },
+            '401': { description: 'Missing or invalid API key' }
           }
         }
       },
@@ -130,7 +215,7 @@ export function generateOpenApiSchema(origin = 'https://agentpulse.dev') {
       '/v1/preflight': {
         post: {
           summary: 'Batch Dependency Preflight Check',
-          description: 'Agent sends an array of dependencies before running a toolchain or workflow; receives a single pass/degraded/block verdict.',
+          description: 'Agent sends an array of dependencies before running a toolchain or workflow; receives a single pass/degraded/block verdict. When the caller is authenticated and has a stored dependency manifest (PUT /v1/agents/me/dependencies), each requested service that is in the manifest also carries a compact `impact` verdict: { affected, incident_ids, change_ids, reason } — affected means an active incident or a breaking change detected in the last 90 days touches that service.',
           requestBody: {
             required: true,
             content: {
@@ -191,6 +276,13 @@ export function generateOpenApiSchema(origin = 'https://agentpulse.dev') {
               required: false,
               schema: { type: 'string' },
               description: 'Optional service slug filter'
+            },
+            {
+              name: 'scope',
+              in: 'query',
+              required: false,
+              schema: { type: 'string', enum: ['all', 'mine'], default: 'all' },
+              description: 'scope=mine restricts the feed to services in the authenticated caller\'s dependency manifest. Requires Authorization: Bearer <api_key> (401 otherwise).'
             }
           ],
           responses: {
@@ -203,12 +295,15 @@ export function generateOpenApiSchema(origin = 'https://agentpulse.dev') {
                     properties: {
                       count: { type: 'integer' },
                       since: { type: 'string' },
+                      service_filter: { type: 'string' },
+                      scope: { type: 'string', description: 'Present when scope=mine was applied' },
                       changes: { type: 'array', items: { type: 'object' } }
                     }
                   }
                 }
               }
-            }
+            },
+            '401': { description: 'scope=mine requested without a valid API key' }
           }
         }
       },
@@ -279,7 +374,7 @@ export function generateOpenApiSchema(origin = 'https://agentpulse.dev') {
       '/mcp': {
         post: {
           summary: 'Stateless Streamable HTTP MCP Server',
-          description: 'Model Context Protocol endpoint supporting check_dependency_health, lookup_breaking_changes, get_service_status, and report_outage_signal via JSON-RPC 2.0 or Mcp-Method/Mcp-Name headers.',
+          description: 'Model Context Protocol endpoint supporting check_dependency_health, lookup_breaking_changes, get_service_status, get_my_impact, and report_outage_signal via JSON-RPC 2.0 or Mcp-Method/Mcp-Name headers. Send Authorization: Bearer <api_key> to identify the calling agent: check_dependency_health then enriches manifest services with impact verdicts, and get_my_impact returns affected verdicts for the caller\'s whole manifest.',
           responses: {
             '200': { description: 'MCP JSON-RPC response or streamable tool output' }
           }

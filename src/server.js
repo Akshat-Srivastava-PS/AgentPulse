@@ -11,6 +11,8 @@ import {
   getBreakingChanges,
   registerAgentClient,
   getAgentByApiKey,
+  getAgentDependencies,
+  setAgentDependencies,
   recordAgentUsage,
   recordOutageSignal,
   getSystemMetrics
@@ -168,6 +170,69 @@ export async function handleRequest(req, res) {
       });
     }
 
+    // 3b. Dependency Manifests: GET/PUT /v1/agents/me/dependencies (Step 2)
+    if (pathname === '/v1/agents/me/dependencies' && (method === 'GET' || method === 'PUT')) {
+      const agent = authenticateRequest(req);
+      if (!agent) {
+        return sendJson(res, 401, {
+          error: 'Unauthorized: a valid API key is required (Authorization: Bearer agp_live_...). Register at POST /v1/agents/register.'
+        });
+      }
+      recordAgentUsage(agent.id, false);
+
+      if (method === 'GET') {
+        const dependencies = getAgentDependencies(agent.id);
+        return sendJson(res, 200, {
+          agent_id: agent.id,
+          count: dependencies.length,
+          dependencies
+        });
+      }
+
+      // PUT: replace-all manifest update
+      const body = await parseJsonBody(req);
+      const deps = body.dependencies;
+
+      if (!Array.isArray(deps)) {
+        return sendJson(res, 400, {
+          error: 'Missing required field: dependencies (array of { service, package?, version? })'
+        });
+      }
+
+      for (const dep of deps) {
+        if (!dep || typeof dep.service !== 'string' || dep.service.trim().length === 0) {
+          return sendJson(res, 400, {
+            error: 'Each dependency must include a service slug (string).'
+          });
+        }
+        if (dep.package !== undefined && dep.package !== null && typeof dep.package !== 'string') {
+          return sendJson(res, 400, {
+            error: `Invalid package for service '${dep.service.trim().toLowerCase()}': must be a string.`
+          });
+        }
+        if (dep.version !== undefined && dep.version !== null && typeof dep.version !== 'string') {
+          return sendJson(res, 400, {
+            error: `Invalid version for service '${dep.service.trim().toLowerCase()}': must be a string.`
+          });
+        }
+        const slug = dep.service.trim().toLowerCase();
+        if (!getService(slug)) {
+          return sendJson(res, 400, {
+            error: `Unknown service slug: '${slug}'. See GET /v1/services for supported services.`,
+            unknown_service: slug
+          });
+        }
+      }
+
+      const stored = setAgentDependencies(agent.id, deps);
+      return sendJson(res, 200, {
+        message: 'Dependency manifest stored. Preflight, the changes feed (scope=mine), and the MCP get_my_impact tool now answer for your stack.',
+        agent_id: agent.id,
+        count: stored.length,
+        dependencies: stored
+      });
+    }
+
     // 4. Batch Preflight: POST /v1/preflight
     if (pathname === '/v1/preflight' && method === 'POST') {
       const agent = authenticateRequest(req);
@@ -178,7 +243,7 @@ export async function handleRequest(req, res) {
       const body = await parseJsonBody(req);
       const dependencies = body.dependencies || [];
 
-      const preflight = evaluatePreflight(dependencies);
+      const preflight = evaluatePreflight(dependencies, agent ? agent.id : null);
       return sendJson(res, 200, preflight, {
         'Cache-Control': 'public, max-age=15'
       });
@@ -229,10 +294,33 @@ export async function handleRequest(req, res) {
       return sendJson(res, 200, compactPayload, responseHeaders);
     }
 
-    // 6. Delta Feed: GET /v1/changes?since={iso_ts}
+    // 6. Delta Feed: GET /v1/changes?since={iso_ts}[&scope=mine]
     if (pathname === '/v1/changes' && method === 'GET') {
       const since = parsedUrl.searchParams.get('since') || null;
       const service = parsedUrl.searchParams.get('service') || null;
+      const scope = (parsedUrl.searchParams.get('scope') || 'all').toLowerCase();
+
+      // Step 2: scope=mine restricts the feed to the caller's manifest services
+      if (scope === 'mine') {
+        const agent = authenticateRequest(req);
+        if (!agent) {
+          return sendJson(res, 401, {
+            error: 'Unauthorized: scope=mine requires a valid API key (Authorization: Bearer agp_live_...).'
+          });
+        }
+        recordAgentUsage(agent.id, false);
+
+        const manifestSlugs = new Set(getAgentDependencies(agent.id).map(d => d.service));
+        const changes = getBreakingChanges(service, since)
+          .filter(c => manifestSlugs.has(c.service_slug));
+        return sendJson(res, 200, {
+          count: changes.length,
+          since: since || 'all_recorded',
+          service_filter: service || 'all',
+          scope: 'mine',
+          changes
+        });
+      }
 
       const changes = getBreakingChanges(service, since);
       return sendJson(res, 200, {

@@ -1,6 +1,28 @@
-import { evaluatePreflight } from '../engine/diffEngine.js';
-import { getService, getActiveIncidents, getBreakingChanges, recordOutageSignal } from '../db/index.js';
+import { evaluatePreflight, evaluateManifestImpact } from '../engine/diffEngine.js';
+import { getService, getActiveIncidents, getBreakingChanges, recordOutageSignal, getAgentByApiKey } from '../db/index.js';
 import { formatCompactStatusPayload } from '../engine/normalizer.js';
+
+/**
+ * Resolves the calling agent's identity for manifest-aware tools.
+ * Primary: the same `Authorization: Bearer agp_live_...` header the REST
+ * layer uses (and the documented MCP client config sends). Fallback: an
+ * explicit `api_key` tool argument, for header-routed clients that cannot
+ * set headers. Returns null when no valid key is presented.
+ */
+export function resolveMcpAgent(req, args = {}) {
+  const authHeader = req?.headers?.['authorization'];
+  if (authHeader) {
+    const parts = String(authHeader).split(' ');
+    if (parts.length === 2 && parts[0].toLowerCase() === 'bearer') {
+      const agent = getAgentByApiKey(parts[1]);
+      if (agent) return agent;
+    }
+  }
+  if (args && typeof args.api_key === 'string' && args.api_key.trim() !== '') {
+    return getAgentByApiKey(args.api_key);
+  }
+  return null;
+}
 
 export const MCP_TOOLS = [
   {
@@ -51,6 +73,20 @@ export const MCP_TOOLS = [
     }
   },
   {
+    name: 'get_my_impact',
+    description: 'Returns "affected code" verdicts for the calling agent\'s stored dependency manifest (set via PUT /v1/agents/me/dependencies): for each dependency, whether an active incident or a breaking change detected in the last 90 days affects it, with matching incident/change ids and a one-line reason. Identity comes from the Authorization: Bearer <api_key> header (same as REST); an api_key argument is accepted as a fallback.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        api_key: {
+          type: 'string',
+          description: 'Optional AgentPulse API key (agp_live_...). Only needed when the Authorization header is not sent.'
+        }
+      },
+      required: []
+    }
+  },
+  {
     name: 'report_outage_signal',
     description: 'Submit an observed 5xx error spike, timeout, or rate-limit anomaly to crowdsource early outage detection across the agent ecosystem.',
     inputSchema: {
@@ -66,16 +102,53 @@ export const MCP_TOOLS = [
   }
 ];
 
-export async function executeMcpTool(name, args = {}) {
+export async function executeMcpTool(name, args = {}, context = {}) {
+  // Agent identity (manifest-aware tools): context.agent is resolved by the
+  // transport from the Authorization header; fall back to an api_key argument.
+  const callerAgent = context.agent || null;
+  const resolveAgent = () => callerAgent || (args && typeof args.api_key === 'string' ? getAgentByApiKey(args.api_key) : null);
+
   switch (name) {
     case 'check_dependency_health': {
       const dependencies = args.dependencies || [];
-      const result = evaluatePreflight(dependencies);
+      const agent = resolveAgent();
+      const result = evaluatePreflight(dependencies, agent ? agent.id : null);
       return {
         content: [
           {
             type: 'text',
             text: JSON.stringify(result, null, 2)
+          }
+        ]
+      };
+    }
+
+    case 'get_my_impact': {
+      const agent = resolveAgent();
+      if (!agent) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                error: 'Unauthorized: get_my_impact requires your AgentPulse API key — send it as the Authorization: Bearer header (as in the documented MCP config) or as the api_key argument. Register at POST /v1/agents/register, then set your manifest via PUT /v1/agents/me/dependencies.'
+              })
+            }
+          ]
+        };
+      }
+
+      const impact = evaluateManifestImpact(agent.id);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              agent_id: agent.id,
+              agent_name: agent.agent_name,
+              ...impact
+            }, null, 2)
           }
         ]
       };
@@ -133,8 +206,10 @@ export async function executeMcpTool(name, args = {}) {
 
     case 'report_outage_signal': {
       const { service, endpoint, error_code, error_type } = args;
+      const agent = resolveAgent();
       const recorded = recordOutageSignal({
         service_slug: service,
+        agent_id: agent ? agent.id : null,
         endpoint,
         error_code,
         error_type
@@ -177,7 +252,7 @@ export async function handleMcpRequest(req, body = {}) {
     if (headerMethod === 'tools/call' || headerMethod === 'execute') {
       const toolName = headerName || body.name;
       const toolArgs = body.arguments || body.args || body;
-      const result = await executeMcpTool(toolName, toolArgs);
+      const result = await executeMcpTool(toolName, toolArgs, { agent: resolveMcpAgent(req, toolArgs) });
       return {
         status: 200,
         body: result
@@ -232,7 +307,7 @@ export async function handleMcpRequest(req, body = {}) {
   if (method === 'tools/call') {
     const { name, arguments: toolArgs } = params || {};
     try {
-      const result = await executeMcpTool(name, toolArgs || {});
+      const result = await executeMcpTool(name, toolArgs || {}, { agent: resolveMcpAgent(req, toolArgs || {}) });
       return {
         status: 200,
         body: {

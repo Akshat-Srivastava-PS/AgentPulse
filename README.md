@@ -82,9 +82,12 @@ flowchart TD
 | **Discovery** | `GET /openapi.json` | Strict OpenAPI 3.1 schema for automated tool ingestion by agent frameworks. |
 | **Bot Onboarding** | `POST /v1/agents/register` | Zero-CAPTCHA self-serve registration returning free-tier API key (1,000 req/day). |
 | **Core Query** | `GET /v1/status/{service}` | Returns health, active incidents, affected regions, and agent hint in < 150 tokens. Supports `If-None-Match` (304). |
-| **Batch Preflight** | `POST /v1/preflight` | Agent sends a list of dependencies (`["stripe", "supabase", "resend"]`); gets single pass/degraded/block verdict. |
-| **Delta Feed** | `GET /v1/changes?since={iso_ts}` | Returns only breaking API/SDK changes and deprecations since the agent's last checkpoint. |
+| **Batch Preflight** | `POST /v1/preflight` | Agent sends a list of dependencies (`["stripe", "supabase", "resend"]`); gets single pass/degraded/block verdict. Authenticated callers with a manifest also get per-service `impact` (affected) verdicts. |
+| **Delta Feed** | `GET /v1/changes?since={iso_ts}` | Returns only breaking API/SDK changes and deprecations since the agent's last checkpoint. `?scope=mine` (auth) restricts it to the caller's manifest services. |
+| **My Manifest** | `PUT /v1/agents/me/dependencies` | Authenticated replace-all write of the caller's dependency manifest (`{service, package?, version?}` per entry; slugs validated). |
+| **My Manifest** | `GET /v1/agents/me/dependencies` | Returns the caller's stored dependency manifest. |
 | **MCP Tool** | `check_dependency_health` | MCP tool wrapper around `/v1/preflight` so IDE agents can check stack health mid-debugging. |
+| **MCP Tool** | `get_my_impact` | Returns "affected code" verdicts for every service in the calling agent's stored manifest (identity via `Authorization: Bearer` header or `api_key` argument). |
 | **MCP Tool** | `lookup_breaking_changes` | MCP tool querying recent deprecations/schema diffs for a specific package or API. |
 | **MCP Tool** | `get_service_status` | MCP tool returning real-time single-service health and agent action hint. |
 | **MCP Tool** | `report_outage_signal` | MCP tool allowing agents to crowdsource observed 5xx spikes to detect early outages. |
@@ -146,7 +149,7 @@ Visit **`http://localhost:3000`** in your browser to open the Cyber-Terminal Web
 ```bash
 npm test
 ```
-Runs 20 automated unit and integration tests across the entire HTTP API, MCP tools, ETag caching, Good Citizen score tracking, token budgets, and the Step 1 ingestion workers (spec-diff classification and Statuspage mapping, fully offline against fixtures).
+Runs 27 automated unit and integration tests across the entire HTTP API, MCP tools, ETag caching, Good Citizen score tracking, token budgets, the Step 1 ingestion workers (spec-diff classification and Statuspage mapping, fully offline against fixtures), and the Step 2 dependency manifests (round-trip, validation, auth, preflight impact verdicts, `scope=mine` filtering, MCP `get_my_impact`).
 
 ### 3. Docker Deployment
 ```bash
@@ -173,6 +176,44 @@ Both workers fail gracefully offline: a failed fetch or parse is logged and skip
 
 ---
 
+## 📦 Dependency Manifests & Affected Answers (Step 2)
+
+Until Step 2, AgentPulse could only say "Stripe is degraded" — not whether *your* code is affected. Now every registered agent can store a **dependency manifest**: the services its stack actually depends on, with optional package/version pins.
+
+```bash
+# Store (replace-all) — slugs validated against the catalog, unknown slug → 400 naming it
+curl -X PUT https://agentpulse.dev/v1/agents/me/dependencies \
+  -H "Authorization: Bearer agp_live_..." \
+  -H "Content-Type: application/json" \
+  -d '{"dependencies": [
+        {"service": "stripe", "package": "stripe", "version": "14.5.0"},
+        {"service": "openai"}
+      ]}'
+
+# Read it back
+curl https://agentpulse.dev/v1/agents/me/dependencies \
+  -H "Authorization: Bearer agp_live_..."
+```
+
+Both endpoints require the agent's API key (401 otherwise). Manifests live in the new `agent_dependencies` table (one row per agent+service, `UNIQUE(agent_id, service_slug)`).
+
+With a manifest in place, three surfaces answer "is my code affected?":
+
+- **Preflight** — `POST /v1/preflight` with your key adds a compact verdict to each requested service that is in your manifest, plus a top-level `affected_count`:
+  ```json
+  "impact": {
+    "affected": true,
+    "incident_ids": ["inc_9821"],
+    "change_ids": [],
+    "reason": "Active major incident inc_9821 on stripe: Elevated 502 error rate (~18%)..."
+  }
+  ```
+  A service is **affected** iff it has any active incident **or** any breaking change detected in the last **90 days**. Unauthenticated and manifest-less calls return exactly the pre-Step-2 payload.
+- **Delta feed** — `GET /v1/changes?scope=mine` returns only breaking changes for your manifest services (401 without a key). Composes with the existing `since`/`service` filters.
+- **MCP** — the new `get_my_impact` tool returns verdicts for your whole manifest in one call. Identity is resolved from the same `Authorization: Bearer` header the REST layer and the documented MCP client config already use; an `api_key` tool argument is accepted as a fallback for clients that cannot set headers. `check_dependency_health` is manifest-aware for identified callers too.
+
+---
+
 ## 🗄️ Database Model (PostgreSQL & SQLite)
 
 The schema is defined in [`src/db/schema.sql`](file:///Users/optimusprime/Projects/Bot-First-Outage/src/db/schema.sql):
@@ -184,6 +225,7 @@ The schema is defined in [`src/db/schema.sql`](file:///Users/optimusprime/Projec
 - **`synthetic_probes`**: `id` (PK), `service_slug` (FK), `probe_target`, `status_code`, `latency_ms`, `is_healthy`, `checked_at`.
 - **`outage_signals`**: `id` (PK), `service_slug` (FK), `endpoint`, `error_code`, `error_type`, `received_at`.
 - **`spec_snapshots`**: `id` (PK), `service_slug` (FK), `spec_url`, `spec_hash` (SHA-256 of the raw spec), `spec_json` (raw spec), `fetched_at`. Latest row per service/URL is the diff baseline.
+- **`agent_dependencies`**: `id` (PK), `agent_id` (FK → `agent_clients`), `service_slug` (FK), `package_name` (nullable), `package_version` (nullable), `created_at`, `updated_at`. Unique per (agent, service); written with replace-all semantics by `PUT /v1/agents/me/dependencies`.
 
 ---
 
