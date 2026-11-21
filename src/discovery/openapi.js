@@ -1,3 +1,39 @@
+// Step 3: shared rate-limit documentation fragments. Authenticated responses
+// carry the X-RateLimit-* headers; an exhausted daily quota yields a 429
+// with Retry-After (seconds to the UTC-midnight reset).
+const RATE_LIMIT_HEADERS = {
+  'X-RateLimit-Limit': { schema: { type: 'integer', example: 1000 }, description: 'Daily quota for the authenticated agent (1000 free tier; 2500 / 5000 with Good Citizen score upgrades).' },
+  'X-RateLimit-Remaining': { schema: { type: 'integer', example: 999 }, description: 'Requests remaining in the current UTC day window.' },
+  'X-RateLimit-Reset': { schema: { type: 'integer', example: 1767225600 }, description: 'Unix epoch seconds of the next quota reset (UTC midnight).' }
+};
+
+const RATE_LIMITED_RESPONSE = {
+  description: 'Daily quota exhausted. Retry after the seconds given in the Retry-After header (reset at UTC midnight). Conditional requests answered 304 never consume quota.',
+  headers: {
+    'Retry-After': { schema: { type: 'integer', example: 3600 }, description: 'Seconds until the quota resets at UTC midnight.' },
+    ...RATE_LIMIT_HEADERS
+  },
+  content: {
+    'application/json': {
+      schema: {
+        type: 'object',
+        properties: {
+          error: { type: 'string' },
+          rate_limit: {
+            type: 'object',
+            properties: {
+              limit: { type: 'integer' },
+              used: { type: 'integer' },
+              remaining: { type: 'integer', example: 0 },
+              reset_at: { type: 'string', format: 'date-time' }
+            }
+          }
+        }
+      }
+    }
+  }
+};
+
 export function generateOpenApiSchema(origin = 'https://agentpulse.dev') {
   return {
     openapi: '3.1.0',
@@ -85,6 +121,7 @@ export function generateOpenApiSchema(origin = 'https://agentpulse.dev') {
           responses: {
             '200': {
               description: 'The caller\'s dependency manifest',
+              headers: RATE_LIMIT_HEADERS,
               content: {
                 'application/json': {
                   schema: {
@@ -110,7 +147,8 @@ export function generateOpenApiSchema(origin = 'https://agentpulse.dev') {
                 }
               }
             },
-            '401': { description: 'Missing or invalid API key' }
+            '401': { description: 'Missing or invalid API key' },
+            '429': RATE_LIMITED_RESPONSE
           }
         },
         put: {
@@ -147,16 +185,17 @@ export function generateOpenApiSchema(origin = 'https://agentpulse.dev') {
             }
           },
           responses: {
-            '200': { description: 'Manifest stored; returns the stored manifest' },
+            '200': { description: 'Manifest stored; returns the stored manifest', headers: RATE_LIMIT_HEADERS },
             '400': { description: 'Malformed body or unknown service slug (see unknown_service field)' },
-            '401': { description: 'Missing or invalid API key' }
+            '401': { description: 'Missing or invalid API key' },
+            '429': RATE_LIMITED_RESPONSE
           }
         }
       },
       '/v1/status/{service}': {
         get: {
           summary: 'Single Service Status & Incident Query',
-          description: 'Returns current health, active incidents, affected regions/scope, and recommended fallback action in < 150 tokens. Supports If-None-Match (304 Not Modified).',
+          description: 'Returns current health, active incidents, affected regions/scope, and recommended fallback action in < 150 tokens. Supports If-None-Match (304 Not Modified). Quota (Step 3): unauthenticated calls are open and uncounted; authenticated calls count toward the daily quota, except conditional requests answered 304, which never consume quota and are never blocked.',
           parameters: [
             {
               name: 'service',
@@ -178,7 +217,8 @@ export function generateOpenApiSchema(origin = 'https://agentpulse.dev') {
               description: 'Compact service health payload (< 150 tokens)',
               headers: {
                 ETag: { schema: { type: 'string', example: 'W/"9821a8b7"' } },
-                'X-Good-Citizen-Score': { schema: { type: 'integer', example: 142 } }
+                'X-Good-Citizen-Score': { schema: { type: 'integer', example: 142 } },
+                ...RATE_LIMIT_HEADERS
               },
               content: {
                 'application/json': {
@@ -207,15 +247,19 @@ export function generateOpenApiSchema(origin = 'https://agentpulse.dev') {
                 }
               }
             },
-            '304': { description: 'Not Modified. Service state unchanged since provided ETag.' },
-            '404': { description: 'Service not found in registry.' }
+            '304': {
+              description: 'Not Modified. Service state unchanged since provided ETag. Never consumes quota and is served even when the daily quota is exhausted.',
+              headers: RATE_LIMIT_HEADERS
+            },
+            '404': { description: 'Service not found in registry.' },
+            '429': RATE_LIMITED_RESPONSE
           }
         }
       },
       '/v1/preflight': {
         post: {
           summary: 'Batch Dependency Preflight Check',
-          description: 'Agent sends an array of dependencies before running a toolchain or workflow; receives a single pass/degraded/block verdict. When the caller is authenticated and has a stored dependency manifest (PUT /v1/agents/me/dependencies), each requested service that is in the manifest also carries a compact `impact` verdict: { affected, incident_ids, change_ids, reason } — affected means an active incident or a breaking change detected in the last 90 days touches that service.',
+          description: 'Agent sends an array of dependencies before running a toolchain or workflow; receives a single pass/degraded/block verdict. When the caller is authenticated and has a stored dependency manifest (PUT /v1/agents/me/dependencies), each requested service that is in the manifest also carries a compact `impact` verdict: { affected, incident_ids, change_ids, reason } — affected means an active incident or a breaking change detected in the last 90 days touches that service. Authenticated calls count toward the daily quota (429 when exhausted); unauthenticated calls are open and uncounted but carry no impact verdicts.',
           requestBody: {
             required: true,
             content: {
@@ -237,6 +281,7 @@ export function generateOpenApiSchema(origin = 'https://agentpulse.dev') {
           responses: {
             '200': {
               description: 'Batch preflight verdict and per-service breakdown',
+              headers: RATE_LIMIT_HEADERS,
               content: {
                 'application/json': {
                   schema: {
@@ -254,7 +299,8 @@ export function generateOpenApiSchema(origin = 'https://agentpulse.dev') {
                   }
                 }
               }
-            }
+            },
+            '429': RATE_LIMITED_RESPONSE
           }
         }
       },
@@ -303,7 +349,8 @@ export function generateOpenApiSchema(origin = 'https://agentpulse.dev') {
                 }
               }
             },
-            '401': { description: 'scope=mine requested without a valid API key' }
+            '401': { description: 'scope=mine requested without a valid API key' },
+            '429': RATE_LIMITED_RESPONSE
           }
         }
       },
@@ -359,6 +406,61 @@ export function generateOpenApiSchema(origin = 'https://agentpulse.dev') {
           }
         }
       },
+      '/v1/telemetry/report': {
+        post: {
+          summary: 'Crowdsourced Outage Telemetry Report',
+          description: 'Submit an observed 5xx error spike, timeout, or rate-limit anomaly to the anomaly-detection pipeline. Step 3: a valid API key is required (writes must be attributable to an agent) and the report counts toward the daily quota.',
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    service: { type: 'string', example: 'github' },
+                    endpoint: { type: 'string', example: 'POST /repos/owner/repo/pulls' },
+                    error_code: { type: 'integer', example: 502 },
+                    error_type: { type: 'string', example: '502_bad_gateway' }
+                  },
+                  required: ['service', 'endpoint', 'error_code']
+                }
+              }
+            }
+          },
+          responses: {
+            '202': { description: 'Signal accepted into the anomaly detection pipeline', headers: RATE_LIMIT_HEADERS },
+            '400': { description: 'Missing service, endpoint, or error_code' },
+            '401': { description: 'Missing or invalid API key' },
+            '429': RATE_LIMITED_RESPONSE
+          }
+        }
+      },
+      '/v1/synthetic/probe': {
+        post: {
+          summary: 'Trigger a Synthetic Health Probe',
+          description: 'Manually runs one synthetic probe against a service and records the result. Step 3: requires a valid API key (the trigger writes probe data) and counts toward the daily quota.',
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: false,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    service: { type: 'string', example: 'stripe', description: 'Service slug to probe (default: stripe)' }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            '200': { description: 'Probe result', headers: RATE_LIMIT_HEADERS },
+            '401': { description: 'Missing or invalid API key' },
+            '429': RATE_LIMITED_RESPONSE
+          }
+        }
+      },
       '/v1/stream': {
         get: {
           summary: 'Server-Sent Events (SSE) Live Feed',
@@ -374,9 +476,10 @@ export function generateOpenApiSchema(origin = 'https://agentpulse.dev') {
       '/mcp': {
         post: {
           summary: 'Stateless Streamable HTTP MCP Server',
-          description: 'Model Context Protocol endpoint supporting check_dependency_health, lookup_breaking_changes, get_service_status, get_my_impact, and report_outage_signal via JSON-RPC 2.0 or Mcp-Method/Mcp-Name headers. Send Authorization: Bearer <api_key> to identify the calling agent: check_dependency_health then enriches manifest services with impact verdicts, and get_my_impact returns affected verdicts for the caller\'s whole manifest.',
+          description: 'Model Context Protocol endpoint supporting check_dependency_health, lookup_breaking_changes, get_service_status, get_my_impact, and report_outage_signal via JSON-RPC 2.0 or Mcp-Method/Mcp-Name headers. Send Authorization: Bearer <api_key> to identify the calling agent: check_dependency_health then enriches manifest services with impact verdicts, and get_my_impact returns affected verdicts for the caller\'s whole manifest. Step 3: identified callers\' tool calls count toward the daily quota (429 with a JSON-RPC -32029 error when exhausted); report_outage_signal requires an identified caller (anonymous signals are rejected with a tool-level error). Anonymous read tools stay open.',
           responses: {
-            '200': { description: 'MCP JSON-RPC response or streamable tool output' }
+            '200': { description: 'MCP JSON-RPC response or streamable tool output', headers: RATE_LIMIT_HEADERS },
+            '429': RATE_LIMITED_RESPONSE
           }
         }
       }

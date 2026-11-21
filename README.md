@@ -90,7 +90,9 @@ flowchart TD
 | **MCP Tool** | `get_my_impact` | Returns "affected code" verdicts for every service in the calling agent's stored manifest (identity via `Authorization: Bearer` header or `api_key` argument). |
 | **MCP Tool** | `lookup_breaking_changes` | MCP tool querying recent deprecations/schema diffs for a specific package or API. |
 | **MCP Tool** | `get_service_status` | MCP tool returning real-time single-service health and agent action hint. |
-| **MCP Tool** | `report_outage_signal` | MCP tool allowing agents to crowdsource observed 5xx spikes to detect early outages. |
+| **MCP Tool** | `report_outage_signal` | MCP tool allowing agents to crowdsource observed 5xx spikes to detect early outages. Requires the caller's API key since Step 3. |
+| **Telemetry** | `POST /v1/telemetry/report` | REST crowdsourced outage signal. API key required since Step 3 (401 anonymously); counts toward daily quota. |
+| **Probe Trigger** | `POST /v1/synthetic/probe` | Manually runs one synthetic health probe. API key required since Step 3; counts toward daily quota. |
 
 ---
 
@@ -149,7 +151,7 @@ Visit **`http://localhost:3000`** in your browser to open the Cyber-Terminal Web
 ```bash
 npm test
 ```
-Runs 27 automated unit and integration tests across the entire HTTP API, MCP tools, ETag caching, Good Citizen score tracking, token budgets, the Step 1 ingestion workers (spec-diff classification and Statuspage mapping, fully offline against fixtures), and the Step 2 dependency manifests (round-trip, validation, auth, preflight impact verdicts, `scope=mine` filtering, MCP `get_my_impact`).
+Runs 33 automated unit and integration tests across the entire HTTP API, MCP tools, ETag caching, Good Citizen score tracking, token budgets, the Step 1 ingestion workers (spec-diff classification and Statuspage mapping, fully offline against fixtures), the Step 2 dependency manifests (round-trip, validation, auth, preflight impact verdicts, `scope=mine` filtering, MCP `get_my_impact`), and Step 3 quota enforcement & auth hardening (429 + `Retry-After`, 304 quota exemption, write authentication, demo-key removal, rate-limit headers, MCP quota).
 
 ### 3. Docker Deployment
 ```bash
@@ -211,6 +213,43 @@ With a manifest in place, three surfaces answer "is my code affected?":
   A service is **affected** iff it has any active incident **or** any breaking change detected in the last **90 days**. Unauthenticated and manifest-less calls return exactly the pre-Step-2 payload.
 - **Delta feed** — `GET /v1/changes?scope=mine` returns only breaking changes for your manifest services (401 without a key). Composes with the existing `since`/`service` filters.
 - **MCP** — the new `get_my_impact` tool returns verdicts for your whole manifest in one call. Identity is resolved from the same `Authorization: Bearer` header the REST layer and the documented MCP client config already use; an `api_key` tool argument is accepted as a fallback for clients that cannot set headers. `check_dependency_health` is manifest-aware for identified callers too.
+
+---
+
+## 🚦 Quotas & Auth (Step 3)
+
+Through Step 2, usage was counted but never enforced, telemetry accepted anonymous writes, and every fresh install seeded a well-known demo API key. Step 3 closes all three gaps.
+
+### Quota enforcement
+
+Daily quotas (free tier **1,000/day**, Good Citizen upgrades to **2,500** at score 300 and **5,000** at score 600, resetting at **UTC midnight**) are now enforced for identified agents on both REST and MCP:
+
+- **Counted** (1 unit each): authenticated `GET /v1/status/{service}` answered 200, `POST /v1/preflight`, manifest `GET`/`PUT /v1/agents/me/dependencies`, `GET /v1/changes?scope=mine`, `POST /v1/telemetry/report`, `POST /v1/synthetic/probe`, and identified MCP `tools/call` executions.
+- **Never counted**: responses answered **304** (the Good Citizen incentive — a 304 still earns its +2 score and is served even when the quota is exhausted), and all **unauthenticated public reads** (`/v1/status/*`, `/v1/services`, `/v1/incidents`, `/v1/changes`, `/v1/metrics`, `/v1/stream`, discovery documents, anonymous MCP read tools). Public status reads are the product's discovery surface and stay open.
+- **Exhaustion** returns `429` in the standard error format plus a `rate_limit` object, a `Retry-After` header (seconds to the UTC-midnight reset), and the rate-limit headers below. MCP callers get HTTP 429 with a JSON-RPC error (`code: -32029`) instead of a tool result.
+- **Headers**: every authenticated response carries `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset` (Unix epoch seconds of the next reset) — the headers the OpenAPI document always advertised are now real.
+
+### Write authentication
+
+Every mutating route now requires a valid `Authorization: Bearer agp_live_...` key, so each write is attributable to a registered agent:
+
+| Route | Before Step 3 | Now |
+| :--- | :--- | :--- |
+| `POST /v1/agents/register` | open | **open** (zero-CAPTCHA onboarding is the product) |
+| `PUT /v1/agents/me/dependencies` | auth (Step 2) | auth + quota |
+| `POST /v1/telemetry/report` | anonymous accepted | **auth required** (401 anonymously) |
+| `POST /v1/synthetic/probe` | anonymous accepted | **auth required** (401 anonymously) |
+| MCP `report_outage_signal` | anonymous accepted | **identified caller required** (Authorization header or `api_key` argument — the same identity path `get_my_impact` uses since Step 2) |
+
+### Demo key removal
+
+Fresh databases no longer seed the demo agent (`agent_demo_01` / `agp_live_demo...`) — a predictable credential in every install is a standing backdoor. Register a real agent via `POST /v1/agents/register` instead.
+
+> **Existing databases:** no destructive migration is run automatically; the demo row is simply left in place. To retire it from an existing install, run once against that database:
+> ```sql
+> DELETE FROM agent_clients WHERE id = 'agent_demo_01';
+> ```
+> (Its manifest rows, if any, are removed by the `ON DELETE CASCADE` foreign key.)
 
 ---
 

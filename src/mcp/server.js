@@ -1,5 +1,5 @@
 import { evaluatePreflight, evaluateManifestImpact } from '../engine/diffEngine.js';
-import { getService, getActiveIncidents, getBreakingChanges, recordOutageSignal, getAgentByApiKey } from '../db/index.js';
+import { getService, getActiveIncidents, getBreakingChanges, recordOutageSignal, getAgentByApiKey, recordAgentUsage, getAgentQuotaState } from '../db/index.js';
 import { formatCompactStatusPayload } from '../engine/normalizer.js';
 
 /**
@@ -22,6 +22,36 @@ export function resolveMcpAgent(req, args = {}) {
     return getAgentByApiKey(args.api_key);
   }
   return null;
+}
+
+// --- Step 3: quota enforcement for identified MCP callers ---
+// Anonymous tool calls stay open (public read surface, same policy as REST).
+// An identified agent's tool calls count toward its daily quota; once the
+// quota is exhausted, tools/call is rejected before execution.
+
+function mcpRateLimitHeaders(agent) {
+  const state = getAgentQuotaState(agent.id);
+  if (!state) return {};
+  return {
+    'X-RateLimit-Limit': String(state.limit),
+    'X-RateLimit-Remaining': String(state.remaining),
+    'X-RateLimit-Reset': String(state.reset_epoch_seconds)
+  };
+}
+
+function quotaGateForToolCall(req, args) {
+  const agent = resolveMcpAgent(req, args);
+  if (!agent) return { agent: null, headers: {} };
+  const state = getAgentQuotaState(agent.id);
+  if (state && !state.allowed) {
+    return { agent, exceeded: state, headers: {} };
+  }
+  recordAgentUsage(agent.id, false);
+  return { agent, headers: mcpRateLimitHeaders(agent) };
+}
+
+function rateLimitMessage(state) {
+  return `Rate limit exceeded: daily quota of ${state.limit} requests exhausted. Quota resets at ${state.reset_at} (UTC midnight).`;
 }
 
 export const MCP_TOOLS = [
@@ -88,7 +118,7 @@ export const MCP_TOOLS = [
   },
   {
     name: 'report_outage_signal',
-    description: 'Submit an observed 5xx error spike, timeout, or rate-limit anomaly to crowdsource early outage detection across the agent ecosystem.',
+    description: 'Submit an observed 5xx error spike, timeout, or rate-limit anomaly to crowdsource early outage detection across the agent ecosystem. Requires the calling agent\'s API key (Authorization: Bearer header or api_key argument) — anonymous signals are rejected.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -207,9 +237,25 @@ export async function executeMcpTool(name, args = {}, context = {}) {
     case 'report_outage_signal': {
       const { service, endpoint, error_code, error_type } = args;
       const agent = resolveAgent();
+      if (!agent) {
+        // Step 3: writes must be attributable — anonymous signals are rejected.
+        // Identified callers (Authorization header or api_key argument) are
+        // unaffected; this is the same identity path as get_my_impact.
+        return {
+          isError: true,
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                error: 'Unauthorized: report_outage_signal requires your AgentPulse API key — send it as the Authorization: Bearer header (as in the documented MCP config) or as the api_key argument. Register at POST /v1/agents/register.'
+              })
+            }
+          ]
+        };
+      }
       const recorded = recordOutageSignal({
         service_slug: service,
-        agent_id: agent ? agent.id : null,
+        agent_id: agent.id,
         endpoint,
         error_code,
         error_type
@@ -252,9 +298,31 @@ export async function handleMcpRequest(req, body = {}) {
     if (headerMethod === 'tools/call' || headerMethod === 'execute') {
       const toolName = headerName || body.name;
       const toolArgs = body.arguments || body.args || body;
-      const result = await executeMcpTool(toolName, toolArgs, { agent: resolveMcpAgent(req, toolArgs) });
+      const gate = quotaGateForToolCall(req, toolArgs);
+      if (gate.exceeded) {
+        return {
+          status: 429,
+          headers: {
+            'Retry-After': String(gate.exceeded.retry_after_seconds),
+            'X-RateLimit-Limit': String(gate.exceeded.limit),
+            'X-RateLimit-Remaining': '0',
+            'X-RateLimit-Reset': String(gate.exceeded.reset_epoch_seconds)
+          },
+          body: {
+            error: rateLimitMessage(gate.exceeded),
+            rate_limit: {
+              limit: gate.exceeded.limit,
+              used: gate.exceeded.used,
+              remaining: 0,
+              reset_at: gate.exceeded.reset_at
+            }
+          }
+        };
+      }
+      const result = await executeMcpTool(toolName, toolArgs, { agent: gate.agent });
       return {
         status: 200,
+        headers: gate.headers,
         body: result
       };
     }
@@ -306,10 +374,39 @@ export async function handleMcpRequest(req, body = {}) {
 
   if (method === 'tools/call') {
     const { name, arguments: toolArgs } = params || {};
+    const gate = quotaGateForToolCall(req, toolArgs || {});
+    if (gate.exceeded) {
+      return {
+        status: 429,
+        headers: {
+          'Retry-After': String(gate.exceeded.retry_after_seconds),
+          'X-RateLimit-Limit': String(gate.exceeded.limit),
+          'X-RateLimit-Remaining': '0',
+          'X-RateLimit-Reset': String(gate.exceeded.reset_epoch_seconds)
+        },
+        body: {
+          jsonrpc: '2.0',
+          id: id || 1,
+          error: {
+            code: -32029,
+            message: rateLimitMessage(gate.exceeded),
+            data: {
+              rate_limit: {
+                limit: gate.exceeded.limit,
+                used: gate.exceeded.used,
+                remaining: 0,
+                reset_at: gate.exceeded.reset_at
+              }
+            }
+          }
+        }
+      };
+    }
     try {
-      const result = await executeMcpTool(name, toolArgs || {}, { agent: resolveMcpAgent(req, toolArgs || {}) });
+      const result = await executeMcpTool(name, toolArgs || {}, { agent: gate.agent });
       return {
         status: 200,
+        headers: gate.headers,
         body: {
           jsonrpc: '2.0',
           id: id || 1,

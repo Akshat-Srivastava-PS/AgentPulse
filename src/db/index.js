@@ -357,28 +357,12 @@ function seedInitialData(db) {
     '2026-11-10T08:30:00Z'
   );
 
-  // Seed demo agent client
-  const insertAgent = db.prepare(`
-    INSERT INTO agent_clients (id, api_key_hash, agent_name, operator_url, tier, daily_quota, good_citizen_score, requests_today, last_reset_date, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  const demoKey = 'agp_live_demo1234567890abcdef';
-  const demoHash = crypto.createHash('sha256').update(demoKey).digest('hex');
-  const today = new Date().toISOString().substring(0, 10);
-
-  insertAgent.run(
-    'agent_demo_01',
-    demoHash,
-    'Claude-Code-Assistant',
-    'https://docs.anthropic.com/claude-code',
-    'free_verified',
-    1000,
-    142,
-    18,
-    today,
-    now
-  );
+  // NOTE (Step 3): no demo agent is seeded anymore. Earlier versions seeded a
+  // well-known demo key (agp_live_demo...); a predictable credential in every
+  // fresh install is a standing backdoor, so fresh databases start with zero
+  // agents — register via POST /v1/agents/register instead. Existing databases
+  // keep their rows; see README "Quotas & Auth (Step 3)" for the one-line SQL
+  // to retire the demo agent from an existing install.
 }
 
 // Database helper functions
@@ -554,6 +538,19 @@ export function recordAgentUsage(agentId, isEtag304 = false) {
     newQuota = 5000; // Tier 3 bonus
   }
 
+  if (isEtag304) {
+    // Step 3: a 304 Not Modified response does NOT consume daily quota —
+    // that exemption is the Good Citizen incentive. The score reward (and any
+    // quota-tier upgrade it unlocks) is still applied.
+    db.prepare(`
+      UPDATE agent_clients
+      SET good_citizen_score = ?,
+          daily_quota = ?
+      WHERE id = ?
+    `).run(newScore, newQuota, agentId);
+    return;
+  }
+
   db.prepare(`
     UPDATE agent_clients
     SET requests_today = requests_today + 1,
@@ -561,6 +558,38 @@ export function recordAgentUsage(agentId, isEtag304 = false) {
         daily_quota = ?
     WHERE id = ?
   `).run(newScore, newQuota, agentId);
+}
+
+/**
+ * Step 3: current quota state for an agent, used for enforcement and for the
+ * X-RateLimit-* response headers. The daily window resets at UTC midnight.
+ * If the stored reset date is stale (new UTC day, agent not yet re-fetched
+ * through getAgentByApiKey), usage is reported as 0 — getAgentByApiKey
+ * performs the persisted reset on the auth path before this is consulted.
+ */
+export function getAgentQuotaState(agentId) {
+  const db = getDb();
+  const agent = db.prepare('SELECT * FROM agent_clients WHERE id = ?').get(agentId);
+  if (!agent) return null;
+
+  const now = new Date();
+  const today = now.toISOString().substring(0, 10);
+  const used = agent.last_reset_date === today ? agent.requests_today : 0;
+  const limit = agent.daily_quota;
+  const remaining = Math.max(0, limit - used);
+
+  const resetAt = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 0));
+  const retryAfterSeconds = Math.max(1, Math.ceil((resetAt.getTime() - now.getTime()) / 1000));
+
+  return {
+    allowed: remaining > 0,
+    limit,
+    used,
+    remaining,
+    reset_at: resetAt.toISOString(),
+    reset_epoch_seconds: Math.floor(resetAt.getTime() / 1000),
+    retry_after_seconds: retryAfterSeconds
+  };
 }
 
 export function recordSyntheticProbe({ service_slug, probe_target, status_code, latency_ms, is_healthy }) {

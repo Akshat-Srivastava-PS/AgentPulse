@@ -14,6 +14,7 @@ import {
   getAgentDependencies,
   setAgentDependencies,
   recordAgentUsage,
+  getAgentQuotaState,
   recordOutageSignal,
   getSystemMetrics
 } from './db/index.js';
@@ -37,7 +38,7 @@ function setCorsHeaders(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, If-None-Match, Mcp-Method, Mcp-Name, User-Agent');
-  res.setHeader('Access-Control-Expose-Headers', 'ETag, X-Good-Citizen-Score, X-RateLimit-Limit, X-RateLimit-Remaining, Retry-After');
+  res.setHeader('Access-Control-Expose-Headers', 'ETag, X-Good-Citizen-Score, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, Retry-After');
 }
 
 // JSON Helper
@@ -99,6 +100,55 @@ function authenticateRequest(req) {
   return getAgentByApiKey(token);
 }
 
+// --- Step 3: quota enforcement + rate-limit headers ---
+// Policy: only identified (authenticated) agents consume quota. Public,
+// unauthenticated read endpoints stay open and uncounted — they are the
+// discovery surface. A conditional request answered 304 never consumes
+// quota and is never blocked (the Good Citizen incentive).
+
+function rateLimitHeadersFor(agent) {
+  const state = getAgentQuotaState(agent.id);
+  if (!state) return {};
+  return {
+    'X-RateLimit-Limit': String(state.limit),
+    'X-RateLimit-Remaining': String(state.remaining),
+    'X-RateLimit-Reset': String(state.reset_epoch_seconds)
+  };
+}
+
+function sendRateLimited(res, agent) {
+  const state = getAgentQuotaState(agent.id);
+  return sendJson(res, 429, {
+    error: `Rate limit exceeded: daily quota of ${state.limit} requests exhausted. Quota resets at ${state.reset_at} (UTC midnight). Conditional requests answered 304 do not consume quota.`,
+    rate_limit: {
+      limit: state.limit,
+      used: state.used,
+      remaining: 0,
+      reset_at: state.reset_at
+    }
+  }, {
+    'Retry-After': String(state.retry_after_seconds),
+    'X-RateLimit-Limit': String(state.limit),
+    'X-RateLimit-Remaining': '0',
+    'X-RateLimit-Reset': String(state.reset_epoch_seconds)
+  });
+}
+
+/**
+ * Gate for a counted authenticated request: returns true (after recording
+ * one unit of usage) when the agent is within quota; sends a 429 and
+ * returns false when the daily quota is exhausted.
+ */
+function consumeQuotaOrReject(res, agent) {
+  const state = getAgentQuotaState(agent.id);
+  if (state && !state.allowed) {
+    sendRateLimited(res, agent);
+    return false;
+  }
+  recordAgentUsage(agent.id, false);
+  return true;
+}
+
 export async function handleRequest(req, res) {
   const origin = `http://${req.headers.host || 'localhost:' + PORT}`;
   const parsedUrl = new URL(req.url, origin);
@@ -139,7 +189,7 @@ export async function handleRequest(req, res) {
     if (pathname === '/mcp') {
       const body = method === 'POST' ? await parseJsonBody(req).catch(() => ({})) : {};
       const mcpResponse = await handleMcpRequest(req, body);
-      return sendJson(res, mcpResponse.status, mcpResponse.body);
+      return sendJson(res, mcpResponse.status, mcpResponse.body, mcpResponse.headers || {});
     }
 
     // 3. Bot Onboarding: POST /v1/agents/register
@@ -178,7 +228,7 @@ export async function handleRequest(req, res) {
           error: 'Unauthorized: a valid API key is required (Authorization: Bearer agp_live_...). Register at POST /v1/agents/register.'
         });
       }
-      recordAgentUsage(agent.id, false);
+      if (!consumeQuotaOrReject(res, agent)) return;
 
       if (method === 'GET') {
         const dependencies = getAgentDependencies(agent.id);
@@ -186,7 +236,7 @@ export async function handleRequest(req, res) {
           agent_id: agent.id,
           count: dependencies.length,
           dependencies
-        });
+        }, rateLimitHeadersFor(agent));
       }
 
       // PUT: replace-all manifest update
@@ -230,14 +280,16 @@ export async function handleRequest(req, res) {
         agent_id: agent.id,
         count: stored.length,
         dependencies: stored
-      });
+      }, rateLimitHeadersFor(agent));
     }
 
     // 4. Batch Preflight: POST /v1/preflight
     if (pathname === '/v1/preflight' && method === 'POST') {
       const agent = authenticateRequest(req);
+      let rlHeaders = {};
       if (agent) {
-        recordAgentUsage(agent.id, false);
+        if (!consumeQuotaOrReject(res, agent)) return;
+        rlHeaders = rateLimitHeadersFor(agent);
       }
 
       const body = await parseJsonBody(req);
@@ -245,7 +297,8 @@ export async function handleRequest(req, res) {
 
       const preflight = evaluatePreflight(dependencies, agent ? agent.id : null);
       return sendJson(res, 200, preflight, {
-        'Cache-Control': 'public, max-age=15'
+        'Cache-Control': 'public, max-age=15',
+        ...rlHeaders
       });
     }
 
@@ -266,14 +319,23 @@ export async function handleRequest(req, res) {
       const isEtagMatch = clientEtag && (clientEtag === service.etag || clientEtag === `W/${service.etag}`);
 
       const agent = authenticateRequest(req);
+      let rlHeaders = {};
       if (agent) {
-        recordAgentUsage(agent.id, isEtagMatch);
+        if (isEtagMatch) {
+          // 304: Good Citizen score reward only — consumes no quota and is
+          // never blocked, even when the agent is at its daily limit.
+          recordAgentUsage(agent.id, true);
+        } else if (!consumeQuotaOrReject(res, agent)) {
+          return;
+        }
+        rlHeaders = rateLimitHeadersFor(agent);
       }
 
       const responseHeaders = {
         ETag: service.etag,
         'Cache-Control': 'public, max-age=15, stale-while-revalidate=45',
-        'X-Good-Citizen-Score': agent ? String(agent.good_citizen_score + (isEtagMatch ? 2 : 0)) : '100'
+        'X-Good-Citizen-Score': agent ? String(agent.good_citizen_score + (isEtagMatch ? 2 : 0)) : '100',
+        ...rlHeaders
       };
 
       if (isEtagMatch) {
@@ -308,7 +370,7 @@ export async function handleRequest(req, res) {
             error: 'Unauthorized: scope=mine requires a valid API key (Authorization: Bearer agp_live_...).'
           });
         }
-        recordAgentUsage(agent.id, false);
+        if (!consumeQuotaOrReject(res, agent)) return;
 
         const manifestSlugs = new Set(getAgentDependencies(agent.id).map(d => d.service));
         const changes = getBreakingChanges(service, since)
@@ -319,7 +381,7 @@ export async function handleRequest(req, res) {
           service_filter: service || 'all',
           scope: 'mine',
           changes
-        });
+        }, rateLimitHeadersFor(agent));
       }
 
       const changes = getBreakingChanges(service, since);
@@ -352,8 +414,16 @@ export async function handleRequest(req, res) {
     }
 
     // 9. Crowdsourced Telemetry: POST /v1/telemetry/report
+    // Step 3: writes must be attributable — a valid API key is required.
     if (pathname === '/v1/telemetry/report' && method === 'POST') {
       const agent = authenticateRequest(req);
+      if (!agent) {
+        return sendJson(res, 401, {
+          error: 'Unauthorized: telemetry reports require a valid API key (Authorization: Bearer agp_live_...). Register at POST /v1/agents/register.'
+        });
+      }
+      if (!consumeQuotaOrReject(res, agent)) return;
+
       const body = await parseJsonBody(req);
       const { service, endpoint, error_code, error_type } = body;
 
@@ -365,7 +435,7 @@ export async function handleRequest(req, res) {
 
       const record = recordOutageSignal({
         service_slug: service,
-        agent_id: agent ? agent.id : null,
+        agent_id: agent.id,
         endpoint,
         error_code: parseInt(error_code, 10),
         error_type
@@ -374,7 +444,7 @@ export async function handleRequest(req, res) {
       return sendJson(res, 202, {
         message: 'Signal accepted into anomaly detection pipeline',
         signal: record
-      });
+      }, rateLimitHeadersFor(agent));
     }
 
     // 10. Live SSE Stream: GET /v1/stream
@@ -417,12 +487,22 @@ export async function handleRequest(req, res) {
       return sendJson(res, 200, metrics);
     }
 
-    // 12. Synthetic Probe Trigger (Test / Manual): POST /v1/synthetic/probe
+    // 12. Synthetic Probe Trigger (Manual): POST /v1/synthetic/probe
+    // Step 3: this trigger writes probe rows and mutates service latency, so
+    // it now requires a valid API key like every other write.
     if (pathname === '/v1/synthetic/probe' && method === 'POST') {
+      const agent = authenticateRequest(req);
+      if (!agent) {
+        return sendJson(res, 401, {
+          error: 'Unauthorized: triggering a synthetic probe requires a valid API key (Authorization: Bearer agp_live_...).'
+        });
+      }
+      if (!consumeQuotaOrReject(res, agent)) return;
+
       const body = await parseJsonBody(req);
       const service = body.service || 'stripe';
       const result = await executeSyntheticProbe(service);
-      return sendJson(res, 200, result);
+      return sendJson(res, 200, result, rateLimitHeadersFor(agent));
     }
 
     // 13. Static Frontend Assets Serving

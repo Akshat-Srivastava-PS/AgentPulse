@@ -219,10 +219,34 @@ test('10. Catalog & Incidents: GET /v1/services and GET /v1/incidents', async ()
   assert.strictEqual(incData.incidents[0].service_slug, 'stripe');
 });
 
-test('11. Telemetry: POST /v1/telemetry/report logs crowdsourced outage signal', async () => {
+test('11. Telemetry: POST /v1/telemetry/report logs crowdsourced outage signal (auth required since Step 3)', async () => {
+  // Anonymous reports are rejected — writes must be attributable to an agent
+  const anonRes = await dispatchRequest({
+    method: 'POST',
+    url: '/v1/telemetry/report',
+    body: {
+      service: 'github',
+      endpoint: 'POST /repos/owner/repo/pulls',
+      error_code: 502,
+      error_type: '502_bad_gateway'
+    }
+  });
+  assert.strictEqual(anonRes.status, 401);
+
+  const regRes = await dispatchRequest({
+    method: 'POST',
+    url: '/v1/agents/register',
+    body: {
+      agent_name: 'TelemetryBot',
+      operator_url: 'https://github.com/myorg/telemetry-bot'
+    }
+  });
+  const { agent } = await regRes.json();
+
   const res = await dispatchRequest({
     method: 'POST',
     url: '/v1/telemetry/report',
+    headers: { 'Authorization': `Bearer ${agent.api_key}` },
     body: {
       service: 'github',
       endpoint: 'POST /repos/owner/repo/pulls',

@@ -31,7 +31,12 @@ export function generateLlmsTxt(origin = 'https://agentpulse.dev') {
   - \`report_outage_signal\`: Crowdsource early 5xx anomaly detection.
 
 ## Good Citizen Protocol
-- **ETag & 304 Not Modified**: Always pass \`If-None-Match: <etag>\` in subsequent requests. A 304 response costs 0 tokens and grants +2 points to your Good Citizen Score, automatically expanding your daily rate quota up to 5,000 req/day.
+- **ETag & 304 Not Modified**: Always pass \`If-None-Match: <etag>\` in subsequent requests. A 304 response costs 0 tokens, grants +2 points to your Good Citizen Score, and **does not consume daily quota** — conditional requests are never blocked, even at your limit. Score upgrades automatically expand your daily quota (1,000 → 2,500 → 5,000 req/day).
+
+## Quotas & Auth (Enforced)
+- **Daily quota**: free tier 1,000 counted requests/day, resetting at UTC midnight. Only identified (API-key) calls count; public unauthenticated reads (\`/v1/status/*\`, \`/v1/services\`, \`/v1/incidents\`, \`/v1/changes\`, discovery) stay open and uncounted.
+- **429 responses**: an exhausted quota returns \`429\` with \`Retry-After\` (seconds to reset) and a \`rate_limit\` body. Authenticated responses carry \`X-RateLimit-Limit\`, \`X-RateLimit-Remaining\`, and \`X-RateLimit-Reset\` (epoch seconds) headers.
+- **Writes require your API key**: \`PUT /v1/agents/me/dependencies\`, \`POST /v1/telemetry/report\`, \`POST /v1/synthetic/probe\`, and the MCP \`report_outage_signal\` tool all reject anonymous callers with 401. Registration itself stays zero-CAPTCHA and open.
 `;
 }
 
@@ -56,8 +61,20 @@ AgentPulse is an ultra-low latency, token-optimized oracle built specifically fo
   When querying \`GET /v1/status/{service}\`, bots should supply \`If-None-Match: W/"a1b2c3d4e5f6"\`.
   If the service state has not mutated:
   - Server returns \`HTTP 304 Not Modified\` with an empty body (0 tokens consumed!).
+  - The 304 **does not count toward your daily quota** and is served even when the quota is exhausted.
   - Bot receives \`+2\` to its \`good_citizen_score\`.
   - Hitting a score of 300 upgrades quota to 2,500 req/day; score of 600 upgrades to 5,000 req/day.
+
+- **Quota Enforcement (Step 3)**:
+  Daily quotas are enforced for identified agents (REST and MCP tool calls alike):
+  - Counted: authenticated \`GET /v1/status/{service}\` (200 only), \`POST /v1/preflight\`, manifest \`GET\`/\`PUT\`, \`GET /v1/changes?scope=mine\`, \`POST /v1/telemetry/report\`, \`POST /v1/synthetic/probe\`, and identified MCP \`tools/call\` executions.
+  - Never counted: 304 responses, and all unauthenticated public reads (status, services, incidents, changes, metrics, stream, discovery documents).
+  - Exhaustion returns \`HTTP 429\` with \`Retry-After: <seconds to UTC midnight>\` and a JSON body \`{"error": "Rate limit exceeded...", "rate_limit": {"limit", "used", "remaining": 0, "reset_at"}}\`.
+  - Authenticated responses include \`X-RateLimit-Limit\`, \`X-RateLimit-Remaining\`, and \`X-RateLimit-Reset\` (Unix epoch seconds of the next UTC-midnight reset).
+
+- **Write Authentication (Step 3)**:
+  Every mutating route except registration requires \`Authorization: Bearer agp_live_...\`:
+  \`PUT /v1/agents/me/dependencies\`, \`POST /v1/telemetry/report\`, \`POST /v1/synthetic/probe\`, and the MCP \`report_outage_signal\` tool (identity via the Authorization header or its \`api_key\` argument). Anonymous writes receive \`401\`.
 
 ## 3. Endpoints & Schemas
 
@@ -148,6 +165,16 @@ With a manifest in place:
 - The MCP tool \`get_my_impact\` returns the verdict for your whole manifest in one call.
 
 A dependency is **affected** when its service has any active incident, or any breaking change detected in the last 90 days.
+
+### Crowdsourced Telemetry (\`POST /v1/telemetry/report\`)
+Report observed failures so the oracle detects outages early:
+\`\`\`bash
+curl -X POST "${origin}/v1/telemetry/report" \\
+  -H "Authorization: Bearer <KEY>" \\
+  -H "Content-Type: application/json" \\
+  -d '{"service": "github", "endpoint": "POST /repos/owner/repo/pulls", "error_code": 502, "error_type": "502_bad_gateway"}'
+\`\`\`
+Returns \`202\` on acceptance. An API key is required (401 anonymously) and each report counts toward your daily quota.
 
 ## 4. MCP (Model Context Protocol) Setup
 Add AgentPulse to your agent's MCP configuration:
