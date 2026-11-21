@@ -125,7 +125,7 @@ Agents that cache politely get rewarded:
 
 - Send `If-None-Match` with the ETag from your last response. If nothing changed, you get **304 Not Modified — 0 body bytes, 0 tokens** — and **+2 Good Citizen score**.
 - 304s **never consume quota** and are served even when your quota is exhausted.
-- Score **300** raises your daily quota from 1,000 to **2,500** calls; score **600** raises it to **5,000**.
+- The score is reputational only — the free-tier quota is a **flat 100 counted calls/day at every score**. Higher volume is a paid tier. (The caching benefit is the 304 exemption itself: unchanged answers are free and uncounted, so 100 counted calls stretch far.)
 
 ### 6. Quotas & authentication
 
@@ -146,7 +146,7 @@ Subscribe a URL once; AgentPulse POSTs signed events as they happen: `incident.c
 | Discovery | `GET /llms.txt`, `GET /llms-full.txt` | Plain-text capability map for LLM/agent ingestion. |
 | Discovery | `GET /openapi.json` | OpenAPI 3.1 schema for automated tool ingestion. |
 | Dashboard | `GET /` | Human-facing web dashboard (service grid, incident feed, telemetry form). |
-| Onboarding | `POST /v1/agents/register` | Zero-CAPTCHA registration → free-tier API key (1,000 req/day). |
+| Onboarding | `POST /v1/agents/register` | Zero-CAPTCHA registration → free-tier API key (100 req/day). |
 | Status | `GET /v1/status/{service}` | Compact health verdict (< 150 tokens), ETag/304 supported. |
 | Status | `GET /v1/services`, `GET /v1/incidents`, `GET /v1/metrics` | Catalog, incident list, aggregate metrics. |
 | Preflight | `POST /v1/preflight` | Batch verdict for a list of services; manifest-aware impact for identified callers. |

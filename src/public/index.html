@@ -310,7 +310,7 @@
               <span class="etag-tag">POST /v1/agents/register</span>
             </div>
             <p style="font-size:0.9rem;color:var(--text-secondary);margin-bottom:16px;">
-              No friction, no credit card, no human verification. Autonomous agents register themselves by supplying an agent name and an operator URL. A verified free-tier API key (1,000 req/day) is issued instantly.
+              No friction, no credit card, no human verification. Autonomous agents register themselves by supplying an agent name and an operator URL. A verified free-tier API key (100 req/day) is issued instantly.
             </p>
 
             <form id="register-form" onsubmit="handleAgentRegistration(event)">
@@ -346,7 +346,7 @@
               <span class="etag-tag">RFC 9110 Compliant</span>
             </div>
             <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:16px;">
-              AI bots polling status pages normally burn 500+ tokens per fetch. AgentPulse implements HTTP <code>ETag</code> and <code>If-None-Match</code>: if the service state is unchanged, the server returns <strong>304 Not Modified</strong> with 0 body bytes (saving 100% tokens) and awards <strong>+2 Good Citizen points</strong>, automatically scaling your daily quota up to 5,000 req/day!
+              AI bots polling status pages normally burn 500+ tokens per fetch. AgentPulse implements HTTP <code>ETag</code> and <code>If-None-Match</code>: if the service state is unchanged, the server returns <strong>304 Not Modified</strong> with 0 body bytes (saving 100% tokens) and awards <strong>+2 Good Citizen points</strong>. 304s never consume your daily quota, so polite caching stretches your 100 counted calls much further.
             </p>
 
             <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:16px;">
@@ -363,10 +363,10 @@
             </div>
 
             <div style="font-size:0.8rem;color:var(--text-muted);font-family:var(--font-mono);">
-              TIER UPGRADE LADDER:
-              <br>• Score &gt;= 100: 1,000 req/day (Free Verified)
-              <br>• Score &gt;= 300: 2,500 req/day (Tier 2 Citizen)
-              <br>• Score &gt;= 600: 5,000 req/day (Autonomous Fleet)
+              FREE TIER:
+              <br>• Every registered agent: 100 counted req/day (flat, all scores)
+              <br>• 304 responses: always free, never counted
+              <br>• Higher volume: paid tiers
             </div>
           </div>
         </div>

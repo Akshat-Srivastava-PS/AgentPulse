@@ -6,7 +6,7 @@ import { getDb, getAgentByApiKey } from '../src/db/index.js';
 // Step 3: quota enforcement + auth hardening.
 // Fully offline — all requests are dispatched in-process via testHelper.
 // Quota exhaustion is arranged by direct DB manipulation of the test agent's
-// own row (requests_today = daily_quota) instead of making 1,000 requests.
+// own row (requests_today = daily_quota) instead of making 100 requests.
 
 async function registerAgent(name) {
   const res = await dispatchRequest({
@@ -48,7 +48,7 @@ test('28. Quota: agent exceeding its daily quota gets 429 with Retry-After and r
   const retryAfter = parseInt(res.headers.get('retry-after'), 10);
   assert.ok(Number.isInteger(retryAfter) && retryAfter > 0 && retryAfter <= 86400,
     `Retry-After must be seconds until UTC midnight, got ${res.headers.get('retry-after')}`);
-  assert.strictEqual(res.headers.get('x-ratelimit-limit'), '1000');
+  assert.strictEqual(res.headers.get('x-ratelimit-limit'), '100');
   assert.strictEqual(res.headers.get('x-ratelimit-remaining'), '0');
   const reset = parseInt(res.headers.get('x-ratelimit-reset'), 10);
   assert.ok(Math.abs(reset - expectedResetEpochSeconds()) <= 2,
@@ -56,7 +56,7 @@ test('28. Quota: agent exceeding its daily quota gets 429 with Retry-After and r
 
   const data = await res.json();
   assert.ok(data.error.includes('Rate limit exceeded'));
-  assert.strictEqual(data.rate_limit.limit, 1000);
+  assert.strictEqual(data.rate_limit.limit, 100);
   assert.strictEqual(data.rate_limit.remaining, 0);
   assert.ok(data.rate_limit.reset_at);
 
@@ -88,7 +88,7 @@ test('29. Quota: 304 responses do not consume quota and are never blocked', asyn
   });
   assert.strictEqual(firstRes.status, 200);
   const etag = firstRes.headers.get('etag');
-  assert.strictEqual(firstRes.headers.get('x-ratelimit-remaining'), '999');
+  assert.strictEqual(firstRes.headers.get('x-ratelimit-remaining'), '99');
   const scoreBefore = parseInt(firstRes.headers.get('x-good-citizen-score'), 10);
 
   // A 304 hit leaves remaining quota untouched but still pays the score reward
@@ -97,7 +97,7 @@ test('29. Quota: 304 responses do not consume quota and are never blocked', asyn
     headers: { ...authHeaders(agent), 'If-None-Match': etag }
   });
   assert.strictEqual(cachedRes.status, 304);
-  assert.strictEqual(cachedRes.headers.get('x-ratelimit-remaining'), '999',
+  assert.strictEqual(cachedRes.headers.get('x-ratelimit-remaining'), '99',
     '304 must not consume quota');
   const scoreAfter = parseInt(cachedRes.headers.get('x-good-citizen-score'), 10);
   assert.strictEqual(scoreAfter, scoreBefore + 2, '304 still grants the +2 Good Citizen reward');
@@ -204,8 +204,8 @@ test('32. Rate-limit headers: present on authenticated responses, absent on publ
     headers: authHeaders(agent)
   });
   assert.strictEqual(statusRes.status, 200);
-  assert.strictEqual(statusRes.headers.get('x-ratelimit-limit'), '1000');
-  assert.strictEqual(statusRes.headers.get('x-ratelimit-remaining'), '999');
+  assert.strictEqual(statusRes.headers.get('x-ratelimit-limit'), '100');
+  assert.strictEqual(statusRes.headers.get('x-ratelimit-remaining'), '99');
   const reset = parseInt(statusRes.headers.get('x-ratelimit-reset'), 10);
   assert.ok(Math.abs(reset - expectedResetEpochSeconds()) <= 2);
 
@@ -214,8 +214,8 @@ test('32. Rate-limit headers: present on authenticated responses, absent on publ
     headers: authHeaders(agent)
   });
   assert.strictEqual(manifestRes.status, 200);
-  assert.strictEqual(manifestRes.headers.get('x-ratelimit-limit'), '1000');
-  assert.strictEqual(manifestRes.headers.get('x-ratelimit-remaining'), '998',
+  assert.strictEqual(manifestRes.headers.get('x-ratelimit-limit'), '100');
+  assert.strictEqual(manifestRes.headers.get('x-ratelimit-remaining'), '98',
     'Each counted authenticated request decrements remaining quota');
 
   // Public, unauthenticated reads carry no rate-limit headers and stay open
@@ -240,7 +240,7 @@ test('33. MCP quota: identified tool calls count toward quota and are rejected o
     }
   });
   assert.strictEqual(callRes.status, 200);
-  assert.strictEqual(callRes.headers.get('x-ratelimit-remaining'), '999');
+  assert.strictEqual(callRes.headers.get('x-ratelimit-remaining'), '99');
 
   // Exhaust the quota: the next identified MCP call is rejected pre-execution
   exhaustQuota(agent.id);

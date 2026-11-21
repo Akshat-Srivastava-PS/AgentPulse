@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS agent_clients (
     agent_name VARCHAR(128) NOT NULL,
     operator_url VARCHAR(255) NOT NULL,
     tier VARCHAR(32) NOT NULL DEFAULT 'free_verified', -- free_verified, pro, autonomous_fleet
-    daily_quota INT NOT NULL DEFAULT 1000,
+    daily_quota INT NOT NULL DEFAULT 100,
     good_citizen_score INT NOT NULL DEFAULT 100, -- Increases when bot respects ETag & Retry-After
     requests_today INT NOT NULL DEFAULT 0,
     last_reset_date VARCHAR(10) NOT NULL,

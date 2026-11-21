@@ -2,8 +2,8 @@
 // carry the X-RateLimit-* headers; an exhausted daily quota yields a 429
 // with Retry-After (seconds to the UTC-midnight reset).
 const RATE_LIMIT_HEADERS = {
-  'X-RateLimit-Limit': { schema: { type: 'integer', example: 1000 }, description: 'Daily quota for the authenticated agent (1000 free tier; 2500 / 5000 with Good Citizen score upgrades).' },
-  'X-RateLimit-Remaining': { schema: { type: 'integer', example: 999 }, description: 'Requests remaining in the current UTC day window.' },
+  'X-RateLimit-Limit': { schema: { type: 'integer', example: 100 }, description: 'Daily quota for the authenticated agent (flat 100/day free tier; higher volume is a paid tier).' },
+  'X-RateLimit-Remaining': { schema: { type: 'integer', example: 99 }, description: 'Requests remaining in the current UTC day window.' },
   'X-RateLimit-Reset': { schema: { type: 'integer', example: 1767225600 }, description: 'Unix epoch seconds of the next quota reset (UTC midnight).' }
 };
 
@@ -73,7 +73,7 @@ export function generateOpenApiSchema(origin = 'https://agentpulse.dev') {
       '/v1/agents/register': {
         post: {
           summary: 'Zero-CAPTCHA Self-Serve Agent Onboarding',
-          description: 'Registers an autonomous AI agent or bot and instantly issues a free-tier API key (1,000 req/day).',
+          description: 'Registers an autonomous AI agent or bot and instantly issues a free-tier API key (100 req/day).',
           requestBody: {
             required: true,
             content: {
@@ -102,7 +102,7 @@ export function generateOpenApiSchema(origin = 'https://agentpulse.dev') {
                       agent_name: { type: 'string' },
                       operator_url: { type: 'string' },
                       tier: { type: 'string', example: 'free_verified' },
-                      daily_quota: { type: 'integer', example: 1000 },
+                      daily_quota: { type: 'integer', example: 100 },
                       good_citizen_score: { type: 'integer', example: 100 }
                     }
                   }

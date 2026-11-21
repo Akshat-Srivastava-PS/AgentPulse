@@ -64,7 +64,7 @@ test('4. Bot Onboarding: POST /v1/agents/register issues API key with zero CAPTC
   assert.strictEqual(data.agent.agent_name, 'Claude-Code-Bot-42');
   assert.ok(data.agent.api_key.startsWith('agp_live_'));
   assert.strictEqual(data.agent.tier, 'free_verified');
-  assert.strictEqual(data.agent.daily_quota, 1000);
+  assert.strictEqual(data.agent.daily_quota, 100);
   assert.strictEqual(data.agent.good_citizen_score, 100);
 });
 

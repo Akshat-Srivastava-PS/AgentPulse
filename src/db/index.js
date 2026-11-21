@@ -72,7 +72,7 @@ function initSchema(db) {
       agent_name TEXT NOT NULL,
       operator_url TEXT NOT NULL,
       tier TEXT NOT NULL DEFAULT 'free_verified',
-      daily_quota INTEGER NOT NULL DEFAULT 1000,
+      daily_quota INTEGER NOT NULL DEFAULT 100,
       good_citizen_score INTEGER NOT NULL DEFAULT 100,
       requests_today INTEGER NOT NULL DEFAULT 0,
       last_reset_date TEXT NOT NULL,
@@ -488,7 +488,7 @@ export function registerAgentClient({ agent_name, operator_url }) {
 
   db.prepare(`
     INSERT INTO agent_clients (id, api_key_hash, agent_name, operator_url, tier, daily_quota, good_citizen_score, requests_today, last_reset_date, created_at)
-    VALUES (?, ?, ?, ?, 'free_verified', 1000, 100, 0, ?, ?)
+    VALUES (?, ?, ?, ?, 'free_verified', 100, 100, 0, ?, ?)
   `).run(id, apiKeyHash, agent_name, operator_url, today, now);
 
   const client = db.prepare('SELECT id, agent_name, operator_url, tier, daily_quota, good_citizen_score FROM agent_clients WHERE id = ?').get(id);
@@ -530,18 +530,18 @@ export function recordAgentUsage(agentId, isEtag304 = false) {
   }
 
   const newScore = Math.min(1000, agent.good_citizen_score + scoreDelta);
-  // High good-citizen score unlocks bonus quota!
-  let newQuota = agent.daily_quota;
-  if (newScore >= 300 && agent.daily_quota === 1000) {
-    newQuota = 2500; // Tier 2 bonus
-  } else if (newScore >= 600 && agent.daily_quota === 2500) {
-    newQuota = 5000; // Tier 3 bonus
-  }
+  // Pricing policy (owner decision, Nov 2026): the free tier is a FLAT
+  // 100 counted requests/day for every agent. The Good Citizen score is
+  // reputational only — it never raises the daily quota. Anything above
+  // 100/day is a paid tier. (The 304 exemption below is the caching
+  // benefit: conditional requests are free, so a well-behaved agent's
+  // 100 counted calls stretch much further.)
+  const newQuota = agent.daily_quota;
 
   if (isEtag304) {
     // Step 3: a 304 Not Modified response does NOT consume daily quota —
-    // that exemption is the Good Citizen incentive. The score reward (and any
-    // quota-tier upgrade it unlocks) is still applied.
+    // that exemption is the Good Citizen incentive. The score reward is
+    // still applied; the quota itself does not change.
     db.prepare(`
       UPDATE agent_clients
       SET good_citizen_score = ?,
