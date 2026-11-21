@@ -100,6 +100,18 @@ function initSchema(db) {
       received_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (service_slug) REFERENCES services(slug) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS spec_snapshots (
+      id TEXT PRIMARY KEY,
+      service_slug TEXT NOT NULL,
+      spec_url TEXT NOT NULL,
+      spec_hash TEXT NOT NULL,
+      spec_json TEXT NOT NULL,
+      fetched_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (service_slug) REFERENCES services(slug) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_spec_snapshots_lookup ON spec_snapshots(service_slug, spec_url, fetched_at DESC);
   `);
 
   // Check if initial services seeded
@@ -550,6 +562,41 @@ export function recordOutageSignal({ service_slug, agent_id, endpoint, error_cod
   `).run(id, service_slug, agent_id || null, endpoint, error_code, error_type || '5xx_error', now);
 
   return { id, service_slug, received_at: now };
+}
+
+export function getIncidentById(id) {
+  const db = getDb();
+  return db.prepare('SELECT * FROM incidents WHERE id = ?').get(id);
+}
+
+export function getBreakingChangeById(id) {
+  const db = getDb();
+  return db.prepare('SELECT * FROM breaking_changes WHERE id = ?').get(id);
+}
+
+// --- OpenAPI spec snapshots (Step 1: real spec-diff ingestion) ---
+
+export function getLatestSpecSnapshot(serviceSlug, specUrl) {
+  const db = getDb();
+  return db.prepare(`
+    SELECT * FROM spec_snapshots
+    WHERE service_slug = ? AND spec_url = ?
+    ORDER BY fetched_at DESC, rowid DESC
+    LIMIT 1
+  `).get(serviceSlug, specUrl);
+}
+
+export function saveSpecSnapshot({ service_slug, spec_url, spec_hash, spec_json }) {
+  const db = getDb();
+  const id = `snap_${crypto.randomUUID().substring(0, 12)}`;
+  const now = new Date().toISOString();
+
+  db.prepare(`
+    INSERT INTO spec_snapshots (id, service_slug, spec_url, spec_hash, spec_json, fetched_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(id, service_slug, spec_url, spec_hash, spec_json, now);
+
+  return db.prepare('SELECT * FROM spec_snapshots WHERE id = ?').get(id);
 }
 
 export function getSystemMetrics() {

@@ -92,3 +92,23 @@ CREATE TABLE IF NOT EXISTS outage_signals (
 );
 
 CREATE INDEX IF NOT EXISTS idx_signals_service_received ON outage_signals(service_slug, received_at DESC);
+
+-- 7. OpenAPI Spec Snapshots (Step 1: real spec-diff ingestion)
+-- One row per fetch of a tracked spec; the latest row per (service, URL) is the
+-- baseline the next fetch is diffed against. The runtime SQLite schema in
+-- src/db/index.js creates this with CREATE TABLE IF NOT EXISTS, so existing
+-- databases gain the table on next boot without a destructive migration.
+CREATE TABLE IF NOT EXISTS spec_snapshots (
+    id VARCHAR(64) PRIMARY KEY,
+    service_slug VARCHAR(64) NOT NULL REFERENCES services(slug) ON DELETE CASCADE,
+    spec_url VARCHAR(512) NOT NULL,
+    spec_hash VARCHAR(64) NOT NULL, -- SHA-256 of the raw spec document
+    spec_json TEXT NOT NULL, -- Raw spec document as fetched
+    fetched_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_spec_snapshots_lookup ON spec_snapshots(service_slug, spec_url, fetched_at DESC);
+
+-- Note on external incidents: Statuspage-sourced incidents keep their
+-- deterministic primary key `sp_<service_slug>_<statuspage_incident_id>` in the
+-- incidents table above; that key is the dedupe mechanism (no extra column).

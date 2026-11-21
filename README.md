@@ -146,12 +146,30 @@ Visit **`http://localhost:3000`** in your browser to open the Cyber-Terminal Web
 ```bash
 npm test
 ```
-Runs 14 automated unit and integration tests across the entire HTTP API, MCP tools, ETag caching, Good Citizen score tracking, and token budgets.
+Runs 20 automated unit and integration tests across the entire HTTP API, MCP tools, ETag caching, Good Citizen score tracking, token budgets, and the Step 1 ingestion workers (spec-diff classification and Statuspage mapping, fully offline against fixtures).
 
 ### 3. Docker Deployment
 ```bash
 docker compose up -d
 ```
+
+---
+
+## 📥 Real Ingestion (Step 1)
+
+Alongside the synthetic probes, two real ingestion workers run on the scheduler (started by `startIngestionWorker` in `src/server.js`):
+
+- **Statuspage poller** (`src/workers/statuspage.js`): polls `<base>/api/v2/summary.json` for every vendor with an Atlassian Statuspage (OpenAI, Anthropic, GitHub, Supabase, Vercel, Cloudflare, Datadog, Resend, npm, Pinecone; Stripe and Twilio are registered behind the same generic mechanism). Live incidents are mapped into the `incidents` model with the existing severity normalizer and agent-hint generator, attributed `source: 'statuspage'`. **Dedupe:** each incident is stored under the deterministic id `sp_<service>_<statuspage_incident_id>` — repeat polls are no-ops, and an incident that disappears from the vendor's active list is resolved locally.
+- **OpenAPI spec-diff worker** (`src/workers/specDiff.js`): fetches tracked JSON specs (Stripe and GitHub publish theirs on GitHub raw; OpenAI's canonical spec is YAML and is skipped until a JSON mirror is configured), SHA-256 hashes them, and diffs changed specs against the last snapshot in the new `spec_snapshots` table. Breaking changes are inserted as real `breaking_changes` rows (`change_type: 'schema_diff'`, deterministic ids, source URL in the summary). The first fetch of a spec is a baseline and produces no changes.
+
+Both workers fail gracefully offline: a failed fetch or parse is logged and skipped, never crashing the server. Seeded sample data remains as fallback.
+
+| Env var | Default | Purpose |
+| :--- | :--- | :--- |
+| `STATUSPAGE_POLL_INTERVAL_MS` | `300000` (5 min) | Statuspage polling interval |
+| `SPEC_DIFF_POLL_INTERVAL_MS` | `3600000` (1 h) | Spec-diff polling interval |
+| `STATUSPAGE_SOURCES_JSON` | built-in registry | Override slug → Statuspage base URL map |
+| `SPEC_SOURCES_JSON` | built-in registry | Override slug → OpenAPI spec URL map |
 
 ---
 
@@ -165,6 +183,7 @@ The schema is defined in [`src/db/schema.sql`](file:///Users/optimusprime/Projec
 - **`agent_clients`**: `id` (PK), `api_key_hash` (unique), `agent_name`, `operator_url`, `tier`, `daily_quota`, `good_citizen_score`.
 - **`synthetic_probes`**: `id` (PK), `service_slug` (FK), `probe_target`, `status_code`, `latency_ms`, `is_healthy`, `checked_at`.
 - **`outage_signals`**: `id` (PK), `service_slug` (FK), `endpoint`, `error_code`, `error_type`, `received_at`.
+- **`spec_snapshots`**: `id` (PK), `service_slug` (FK), `spec_url`, `spec_hash` (SHA-256 of the raw spec), `spec_json` (raw spec), `fetched_at`. Latest row per service/URL is the diff baseline.
 
 ---
 

@@ -9,6 +9,8 @@ import {
   recordSyntheticProbe
 } from '../db/index.js';
 import { normalizeServiceStatus, normalizeSeverity, generateAgentHint } from '../engine/normalizer.js';
+import { startStatuspagePoller, stopStatuspagePoller } from './statuspage.js';
+import { startSpecDiffPoller, stopSpecDiffPoller } from './specDiff.js';
 
 export const eventBroadcaster = new EventEmitter();
 eventBroadcaster.setMaxListeners(200);
@@ -155,6 +157,13 @@ export function startIngestionWorker(intervalMs = 60000) {
   workerInterval = setInterval(() => {
     runIngestionCycle();
   }, intervalMs);
+
+  // Step 1 real ingestion: vendor Statuspage polling + OpenAPI spec diffs.
+  // Intervals are env-configurable; both pollers fail gracefully offline.
+  const statuspageIntervalMs = parseInt(process.env.STATUSPAGE_POLL_INTERVAL_MS || '300000', 10);
+  const specDiffIntervalMs = parseInt(process.env.SPEC_DIFF_POLL_INTERVAL_MS || '3600000', 10);
+  startStatuspagePoller(Number.isFinite(statuspageIntervalMs) ? statuspageIntervalMs : 300000);
+  startSpecDiffPoller(Number.isFinite(specDiffIntervalMs) ? specDiffIntervalMs : 3600000);
 }
 
 export function stopIngestionWorker() {
@@ -163,4 +172,6 @@ export function stopIngestionWorker() {
     workerInterval = null;
     console.log('[IngestionWorker] Stopped scheduled polling');
   }
+  stopStatuspagePoller();
+  stopSpecDiffPoller();
 }
