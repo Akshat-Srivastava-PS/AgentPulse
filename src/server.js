@@ -9,6 +9,7 @@ import {
   getActiveIncidents,
   getRecentIncidents,
   getBreakingChanges,
+  getBreakingChangeById,
   registerAgentClient,
   getAgentByApiKey,
   getAgentDependencies,
@@ -27,6 +28,7 @@ import {
 
 import { formatCompactStatusPayload } from './engine/normalizer.js';
 import { evaluatePreflight } from './engine/diffEngine.js';
+import { buildPlaybook } from './engine/playbooks.js';
 import { handleMcpRequest } from './mcp/server.js';
 import { generateLlmsTxt, generateLlmsFullTxt } from './discovery/llms.js';
 import { generateOpenApiSchema } from './discovery/openapi.js';
@@ -486,6 +488,24 @@ export async function handleRequest(req, res) {
       return sendJson(res, 200, compactPayload, responseHeaders);
     }
 
+    // 5b. Migration Playbook: GET /v1/changes/:id/playbook (Step 6)
+    // Public read, like the changes feed itself: a playbook contains no
+    // agent-specific data, only the change's own fields expanded into steps.
+    const playbookMatch = pathname.match(/^\/v1\/changes\/([a-zA-Z0-9_\-]+)\/playbook$/);
+    if (playbookMatch && method === 'GET') {
+      const change = getBreakingChangeById(playbookMatch[1]);
+      if (!change) {
+        return sendJson(res, 404, {
+          error: `Breaking change '${playbookMatch[1]}' not found. See GET /v1/changes for recorded changes.`
+        });
+      }
+      return sendJson(res, 200, {
+        playbook: buildPlaybook(change)
+      }, {
+        'Cache-Control': 'public, max-age=300'
+      });
+    }
+
     // 6. Delta Feed: GET /v1/changes?since={iso_ts}[&scope=mine]
     if (pathname === '/v1/changes' && method === 'GET') {
       const since = parsedUrl.searchParams.get('since') || null;
@@ -504,7 +524,8 @@ export async function handleRequest(req, res) {
 
         const manifestSlugs = new Set(getAgentDependencies(agent.id).map(d => d.service));
         const changes = getBreakingChanges(service, since)
-          .filter(c => manifestSlugs.has(c.service_slug));
+          .filter(c => manifestSlugs.has(c.service_slug))
+          .map(c => ({ ...c, playbook_url: `${origin}/v1/changes/${c.id}/playbook` }));
         return sendJson(res, 200, {
           count: changes.length,
           since: since || 'all_recorded',
@@ -514,7 +535,8 @@ export async function handleRequest(req, res) {
         }, rateLimitHeadersFor(agent));
       }
 
-      const changes = getBreakingChanges(service, since);
+      const changes = getBreakingChanges(service, since)
+        .map(c => ({ ...c, playbook_url: `${origin}/v1/changes/${c.id}/playbook` }));
       return sendJson(res, 200, {
         count: changes.length,
         since: since || 'all_recorded',

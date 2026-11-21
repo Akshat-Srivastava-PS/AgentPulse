@@ -15,7 +15,9 @@ export function generateLlmsTxt(origin = 'https://agentpulse.dev') {
 ## Essential Preflight & Status Tools
 - [Batch Preflight Check](${origin}/v1/preflight): POST dependency list (e.g. ["stripe", "supabase", "resend"]) to obtain immediate pass/degraded/block verdict.
 - [Service Status Query](${origin}/v1/status/stripe): GET compact health status, active incidents, affected scope, and prescriptive agent_hint (< 150 tokens).
-- [Delta Feed of Breaking Changes](${origin}/v1/changes): GET recent SDK deprecations and schema mutations since timestamp checkpoint. Add \`?scope=mine\` (auth required) to restrict the feed to your manifest services.
+- [Delta Feed of Breaking Changes](${origin}/v1/changes): GET recent SDK deprecations and schema mutations since timestamp checkpoint. Add \`?scope=mine\` (auth required) to restrict the feed to your manifest services. Every change carries a \`playbook_url\`.
+- [Migration Playbook](${origin}/v1/changes/{id}/playbook): GET a structured migration playbook for one breaking change: \`{ change_id, service, kind, summary, steps: [{ action, detail, code_example? }], effort_estimate, risk_notes }\`, generated from the change's own fields (operation, path, parameter/property names, types) — generic templates, no invented vendor facts.
+- [JavaScript SDK](https://www.npmjs.com/package/agentpulse-sdk): \`npm install agentpulse-sdk\` — zero-dependency client (global fetch only) wrapping this API with ETag caching and typed errors, for agents that prefer plain functions over MCP. Source: \`sdk/\` in the AgentPulse repo.
 - [All Monitored Services](${origin}/v1/services): Full catalog of tracked cloud providers, APIs, and registries.
 - [Live Incident Feed](${origin}/v1/incidents): Active incidents with severity ratings and mitigation hints.
 
@@ -151,6 +153,52 @@ Compact (< 150 token) response:
 ### Delta Feed (\`GET /v1/changes?since={iso_ts}\`)
 Returns API/SDK deprecations and schema mutations since the agent's last run.
 Add \`&scope=mine\` with your \`Authorization: Bearer <KEY>\` header to receive only changes for services in your dependency manifest (401 without a valid key).
+Every change object in the feed (public and \`scope=mine\`) includes \`playbook_url\` — the URL of its generated migration playbook.
+
+### Migration Playbooks (\`GET /v1/changes/{id}/playbook\`)
+A breaking change tells you *what* broke; its playbook tells you *what to do*, step by step, in machine-readable form:
+\`\`\`bash
+curl "${origin}/v1/changes/bc_101/playbook"
+\`\`\`
+\`\`\`json
+{
+  "playbook": {
+    "change_id": "bc_...",
+    "service": "stripe",
+    "kind": "parameter_now_required",
+    "summary": "Parameter 'account' (in: query) on GET /v1/charges is now required.",
+    "steps": [
+      { "action": "review_provider_hint", "detail": "Provider migration hint recorded with this change: ..." },
+      { "action": "find_call_sites", "detail": "Find every call to GET /v1/charges that does not send the 'account' parameter..." },
+      { "action": "add_parameter", "detail": "Always send 'account' when calling GET /v1/charges...",
+        "code_example": { "before": "const res = await fetch(API_BASE + '/v1/charges', {\n});", "after": "const res = await fetch(API_BASE + '/v1/charges' + '?account=\${encodeURIComponent(accountValue)}', {\n});" } },
+      { "action": "update_tests", "detail": "Update mocks/fixtures and add a regression test..." }
+    ],
+    "effort_estimate": "low",
+    "risk_notes": ["Calls missing 'account' will start failing with validation errors..."]
+  }
+}
+\`\`\`
+- \`kind\` is the fine-grained spec-diff kind for \`schema_diff\` changes (\`removed_operation\`, \`removed_path\`, \`removed_parameter\`, \`parameter_now_required\`, \`new_required_parameter\`, \`parameter_type_changed\`, \`removed_request_property\`, \`request_property_now_required\`, \`new_required_request_property\`, \`request_property_type_changed\`, \`removed_response_property\`, \`response_property_type_changed\`, \`removed_response\`), recovered from the recorded diff summary; other changes classify by their stored \`change_type\` (\`deprecation\`, \`rate_limit_change\`, generic \`schema_change\` / \`breaking_change\` fallbacks).
+- Steps are ordered: provider hint first, then find → fix → fallback (where relevant) → test. \`code_example\` (\`{ before, after }\`) appears on the steps where a mechanical edit exists.
+- Examples are generic fetch-style templates built **only** from the change's own fields (operation, path, parameter/property name, old/new types). Replacement endpoints and parameter semantics are never invented — the playbook defers to the provider hint/changelog for those.
+- Public read (no API key, no quota), cacheable. Unknown change id → \`404\`.
+
+### JavaScript SDK (\`agentpulse-sdk\`)
+For agents that prefer plain functions over MCP or raw HTTP: a zero-dependency client (global \`fetch\` only, Node 18+) in the \`sdk/\` directory of the AgentPulse repo.
+\`\`\`js
+import { AgentPulseClient, AgentPulseError } from 'agentpulse-sdk';
+const client = new AgentPulseClient({ baseUrl: '${origin}', apiKey: 'agp_live_...' });
+const status = await client.getStatus('stripe');            // ETag-cached; 304 returns the cached body
+const verdict = await client.preflight(['stripe', 'openai']);
+const impact = await client.getMyImpact();                  // manifest verdicts (via MCP get_my_impact)
+const feed = await client.getChanges({ scope: 'mine' });    // changes carry playbook_url
+const playbook = await client.getPlaybook(feed.changes[0].id);
+await client.setDependencies([{ service: 'stripe', package: 'stripe', version: '14.5.0' }]);
+await client.registerWebhook({ url: 'https://bots.example.com/agentpulse', services: ['stripe'] });
+await client.reportOutage({ service: 'github', endpoint: 'POST /repos/o/r/pulls', error_code: 502 });
+\`\`\`
+Non-2xx responses throw \`AgentPulseError\` with \`.status\` and \`.body\`.
 
 ### Dependency Manifest & Affected Answers (\`PUT/GET /v1/agents/me/dependencies\`)
 Register once, then declare the stack your code actually depends on:

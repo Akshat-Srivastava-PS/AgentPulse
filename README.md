@@ -83,7 +83,9 @@ flowchart TD
 | **Bot Onboarding** | `POST /v1/agents/register` | Zero-CAPTCHA self-serve registration returning free-tier API key (1,000 req/day). |
 | **Core Query** | `GET /v1/status/{service}` | Returns health, active incidents, affected regions, and agent hint in < 150 tokens. Supports `If-None-Match` (304). |
 | **Batch Preflight** | `POST /v1/preflight` | Agent sends a list of dependencies (`["stripe", "supabase", "resend"]`); gets single pass/degraded/block verdict. Authenticated callers with a manifest also get per-service `impact` (affected) verdicts. |
-| **Delta Feed** | `GET /v1/changes?since={iso_ts}` | Returns only breaking API/SDK changes and deprecations since the agent's last checkpoint. `?scope=mine` (auth) restricts it to the caller's manifest services. |
+| **Delta Feed** | `GET /v1/changes?since={iso_ts}` | Returns only breaking API/SDK changes and deprecations since the agent's last checkpoint. `?scope=mine` (auth) restricts it to the caller's manifest services. Every change carries a `playbook_url`. |
+| **Playbook** | `GET /v1/changes/{id}/playbook` | Structured migration playbook for one breaking change (Step 6): ordered steps with before/after code examples, an effort estimate, and risk notes — generated from the change's own fields. Public read. |
+| **JS SDK** | `sdk/` (`agentpulse-sdk`) | Zero-dependency JavaScript client (global `fetch` only): status with ETag caching, preflight, changes + playbooks, manifest, impact, webhooks, telemetry. Typed `AgentPulseError` on non-2xx. |
 | **My Manifest** | `PUT /v1/agents/me/dependencies` | Authenticated replace-all write of the caller's dependency manifest (`{service, package?, version?}` per entry; slugs validated). |
 | **My Manifest** | `GET /v1/agents/me/dependencies` | Returns the caller's stored dependency manifest. |
 | **MCP Tool** | `check_dependency_health` | MCP tool wrapper around `/v1/preflight` so IDE agents can check stack health mid-debugging. |
@@ -155,7 +157,7 @@ Visit **`http://localhost:3000`** in your browser to open the Cyber-Terminal Web
 ```bash
 npm test
 ```
-Runs 39 automated unit and integration tests across the entire HTTP API, MCP tools, ETag caching, Good Citizen score tracking, token budgets, the Step 1 ingestion workers (spec-diff classification and Statuspage mapping, fully offline against fixtures), the Step 2 dependency manifests (round-trip, validation, auth, preflight impact verdicts, `scope=mine` filtering, MCP `get_my_impact`), Step 3 quota enforcement & auth hardening (429 + `Retry-After`, 304 quota exemption, write authentication, demo-key removal, rate-limit headers, MCP quota), and the Step 4 webhooks (CRUD + secret handling, HMAC-signed deliveries to a local receiver, service/event filters, retry-and-fail recording, validation).
+Runs 49 automated unit and integration tests across the entire HTTP API, MCP tools, ETag caching, Good Citizen score tracking, token budgets, the Step 1 ingestion workers (spec-diff classification and Statuspage mapping, fully offline against fixtures), the Step 2 dependency manifests (round-trip, validation, auth, preflight impact verdicts, `scope=mine` filtering, MCP `get_my_impact`), Step 3 quota enforcement & auth hardening (429 + `Retry-After`, 304 quota exemption, write authentication, demo-key removal, rate-limit headers, MCP quota), the Step 4 webhooks (CRUD + secret handling, HMAC-signed deliveries to a local receiver, service/event filters, retry-and-fail recording, validation), and Step 6 (playbook generation per diff kind + the playbook endpoint, and the `agentpulse-sdk` package exercised against a real local HTTP server: surface calls, auth header, ETag/304 cache behavior, typed errors, webhook creation, telemetry).
 
 ### 3. Docker Deployment
 ```bash
@@ -319,6 +321,68 @@ The secret (`whsec_...`) is returned **only** in the create response and is neve
 | :--- | :--- | :--- |
 | `WEBHOOK_RETRY_DELAYS_MS` | `1000,5000` | Backoff delays between attempts (attempts = delays + 1) |
 | `WEBHOOK_TIMEOUT_MS` | `5000` | Per-attempt delivery timeout |
+
+---
+
+## 🧭 Migration Playbooks & SDK (Step 6)
+
+Steps 1–4 let an agent *know* its stack broke. Step 6 closes the loop: every breaking change now ships with a **migration playbook** — the concrete fix steps — and a **JavaScript SDK** so agents can consume all of it without hand-rolling HTTP.
+
+### Migration playbooks
+
+```bash
+curl https://agentpulse.dev/v1/changes/<change_id>/playbook
+```
+
+```json
+{
+  "playbook": {
+    "change_id": "bc_spec_…",
+    "service": "stripe",
+    "kind": "parameter_now_required",
+    "summary": "Parameter 'account' (in: query) on GET /v1/charges is now required.",
+    "steps": [
+      { "action": "review_provider_hint", "detail": "Provider migration hint recorded with this change: Always send 'account' when calling GET /v1/charges." },
+      { "action": "find_call_sites", "detail": "Find every call to GET /v1/charges that does not send the 'account' parameter (query) — those calls now fail validation." },
+      { "action": "add_parameter", "detail": "Always send 'account' when calling GET /v1/charges…",
+        "code_example": { "before": "const res = await fetch(API_BASE + '/v1/charges', {\n});", "after": "const res = await fetch(API_BASE + '/v1/charges' + '?account=${encodeURIComponent(accountValue)}', {\n});" } },
+      { "action": "update_tests", "detail": "Update mocks/fixtures and add a regression test…" }
+    ],
+    "effort_estimate": "low",
+    "risk_notes": ["Calls missing 'account' will start failing with validation errors (typically HTTP 400)…"]
+  }
+}
+```
+
+- **Generation** (`src/engine/playbooks.js`, pure function, no I/O): the fine-grained diff `kind` is recovered from the change's recorded `diff_summary` — persisted `breaking_changes` rows don't store the Step 1 diff kind separately, and the worker's summaries are deterministic, so classification is exact for worker-produced rows. All 13 breaking spec-diff kinds get their own step template (`removed_operation`, `removed_path`, `removed_parameter`, `parameter_now_required`, `new_required_parameter`, `parameter_type_changed`, `removed_request_property`, `request_property_now_required`, `new_required_request_property`, `request_property_type_changed`, `removed_response_property`, `response_property_type_changed`, `removed_response`), plus `deprecation`, `rate_limit_change`, and generic `schema_change` / `breaking_change` fallbacks for prose rows.
+- **Steps** are ordered: the recorded provider `migration_hint` first (as `review_provider_hint`), then find → fix → graceful-degradation fallback (for removals) → regression test. Steps with a mechanical edit carry a `code_example` (`{ before, after }`).
+- **No invented vendor facts.** Examples are generic fetch-style templates built **only** from the change's own fields (operation, path, parameter/property name, old/new types). Replacement endpoints and new-parameter semantics are never guessed — the playbook defers to the provider hint/changelog.
+- **Effort estimates**: `low` for parameter/property additions & removals, `medium` for type changes, response-shape changes, deprecations, and rate-limit changes, `high` for removed operations/paths.
+- **Surfacing**: the full playbook lives at its own endpoint (public read, cacheable — playbooks are not token-budgeted payloads). Feeds stay lean: every change object in `GET /v1/changes` (public and `scope=mine`) gains only a `playbook_url` pointer, so the < 150-token status discipline is untouched and an agent fetches the playbook only for changes it actually intends to fix. Unknown change id → `404`.
+
+### SDK (`sdk/` — `agentpulse-sdk`)
+
+A zero-dependency ESM client (global `fetch` only, Node ≥ 18) — the plain-functions alternative to the MCP server for agents and scripts that don't speak MCP:
+
+```js
+import { AgentPulseClient, AgentPulseError } from 'agentpulse-sdk';
+
+const client = new AgentPulseClient({ baseUrl: 'https://agentpulse.dev', apiKey: process.env.AGENTPULSE_API_KEY });
+
+const status = await client.getStatus('stripe');          // ETag-cached: a 304 returns the cached body
+const verdict = await client.preflight(['stripe', 'openai']);
+await client.setDependencies([{ service: 'stripe', package: 'stripe', version: '14.5.0' }]);
+const impact = await client.getMyImpact();                // manifest verdicts (via the MCP get_my_impact tool)
+const feed = await client.getChanges({ scope: 'mine' });  // each change carries playbook_url
+const playbook = await client.getPlaybook(feed.changes[0].id);
+const { webhook } = await client.registerWebhook({ url: 'https://bots.example.com/agentpulse', services: ['stripe'] });
+await client.reportOutage({ service: 'github', endpoint: 'POST /repos/o/r/pulls', error_code: 502 });
+```
+
+- `getStatus()` implements the Good Citizen protocol client-side: ETags are cached in memory (`client.statusCache`, reset with `clearStatusCache()`) and sent as `If-None-Match`; a 304 returns the cached body.
+- `getMyImpact()` is the one method backed by MCP (JSON-RPC `tools/call` to `/mcp`), because the manifest-wide impact verdict lives on the MCP surface; everything else is REST.
+- Non-2xx responses (and MCP tool-level errors) throw `AgentPulseError` with `.status` and `.body`.
+- The SDK is exercised end-to-end in the main test suite (`tests/sdk.test.js`) against a real local HTTP server running this app. It is **not published to npm yet** — `sdk/package.json` is ready (`agentpulse-sdk@0.1.0`); publish with `cd sdk && npm publish` when the API is deployed. See [`sdk/README.md`](sdk/README.md) for the full guide.
 
 ---
 
