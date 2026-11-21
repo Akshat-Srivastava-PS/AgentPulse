@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AgentPulse | Live API & Cloud Status Oracle for AI Agents</title>
+  <meta name="description" content="Sub-50ms ground-truth status and breaking-change oracle for autonomous AI agents, Cursor, Claude Code, and CI bots.">
+  <link rel="stylesheet" href="./styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <!-- Toast Notification Container -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="logo-group">
+        <div class="logo-icon">
+          <svg viewBox="0 0 24 24">
+            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+          </svg>
+        </div>
+        <div class="logo-text">
+          <h1>AgentPulse</h1>
+          <span>API & Cloud Status Oracle</span>
+        </div>
+      </div>
+
+      <nav class="nav-links">
+        <a href="/llms.txt" target="_blank" class="pill-link">
+          <span style="color:var(--accent-cyan);">📄</span> /llms.txt
+        </a>
+        <a href="/openapi.json" target="_blank" class="pill-link">
+          <span style="color:var(--accent-indigo);">⚡</span> OpenAPI 3.1
+        </a>
+        <div class="live-indicator">
+          <div class="pulsing-dot"></div>
+          <span id="live-status-text">EDGE LIVE</span>
+        </div>
+      </nav>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="hero-section">
+      <div class="hero-tagline">
+        <span>⚡ SUB-50MS AGENT GROUND TRUTH</span> • <span>TOKEN-BUDGETED (&lt; 150 TOKENS)</span> • <span>ETAG 304 PROTOCOL</span>
+      </div>
+      <h2>
+        The Live Cloud Status & Breaking-Change Oracle for <span class="gradient-text">Autonomous AI Agents</span>
+      </h2>
+      <p>
+        Coding agents (Claude Code, Cursor, CI bots) burn thousands of tokens debugging "mysterious" 502s and silent SDK deprecations. One sub-50ms JSON/MCP call tells the agent immediately: <em>"Stripe's /v1/payment_intents has elevated 500s; switch to fallback or pause retries."</em>
+      </p>
+
+      <!-- Main Navigation Tabs -->
+      <div class="main-nav-tabs">
+        <button class="nav-tab active" data-tab="tab-matrix">
+          <span>📡</span> Live Dependency Matrix
+        </button>
+        <button class="nav-tab" data-tab="tab-preflight">
+          <span>🛡️</span> Preflight Simulator
+        </button>
+        <button class="nav-tab" data-tab="tab-mcp">
+          <span>🔌</span> Stateless MCP Server
+        </button>
+        <button class="nav-tab" data-tab="tab-onboard">
+          <span>🤖</span> Bot Onboarding & ROI
+        </button>
+        <button class="nav-tab" data-tab="tab-stream">
+          <span>⚡</span> Real-Time Stream
+        </button>
+      </div>
+    </section>
+
+    <!-- Stats Grid -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-label">Monitored Dependencies</div>
+        <div class="stat-value" id="stat-total-services">12</div>
+        <div class="stat-sub">AWS, Stripe, OpenAI, GitHub, etc.</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Active Incidents</div>
+        <div class="stat-value" id="stat-active-incidents" style="color:var(--accent-amber);">1</div>
+        <div class="stat-sub" id="stat-incident-sub">Stripe (Payment Intents degraded)</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Tokens Saved Today</div>
+        <div class="stat-value" id="stat-tokens-saved">2,489,840</div>
+        <div class="stat-sub">Preempted 5xx retry loops</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Edge Cache P99 Latency</div>
+        <div class="stat-value" style="color:var(--accent-cyan);">9.4<span style="font-size:1rem;color:var(--text-muted);">ms</span></div>
+        <div class="stat-sub">ETag 304 Zero-Body protocol</div>
+      </div>
+    </div>
+
+    <!-- TAB 1: Live Matrix & Inspector -->
+    <div id="tab-matrix" class="tab-pane active">
+      <div class="main-grid">
+        <!-- Left: Service Radar -->
+        <div class="left-col">
+          <div class="section-panel">
+            <div class="panel-header">
+              <h3><span>📡</span> Live Monitored Dependencies</h3>
+              <div class="panel-actions">
+                <span id="service-count-badge" class="etag-tag">12 Tracking</span>
+              </div>
+            </div>
+
+            <div class="filter-tabs">
+              <button class="filter-btn active" data-filter="all">All Services</button>
+              <button class="filter-btn" data-filter="ai_models">AI Models</button>
+              <button class="filter-btn" data-filter="payments">Payments</button>
+              <button class="filter-btn" data-filter="cloud_infra">Cloud Infra</button>
+              <button class="filter-btn" data-filter="database">Database</button>
+              <button class="filter-btn" data-filter="hosting">Hosting</button>
+              <button class="filter-btn" data-filter="dev_tools">Dev Tools</button>
+            </div>
+
+            <div class="services-list" id="services-grid">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: Compact Payload Inspector (Sticky) -->
+        <div class="right-col sticky-col">
+          <div class="section-panel" id="inspector-panel">
+            <div class="panel-header">
+              <h3><span>🔍</span> Compact Payload Inspector</h3>
+              <div style="display:flex;align-items:center;gap:6px;">
+                <span class="etag-tag" id="inspector-slug">stripe</span>
+                <span class="etag-tag" id="token-budget-badge">&lt; 150 Tokens</span>
+              </div>
+            </div>
+
+            <div class="incident-box" id="incident-box-wrapper">
+              <div class="incident-box-header">
+                <span class="incident-scope" id="inc-scope">POST /v1/payment_intents (us-east-1)</span>
+                <span class="status-badge degraded" id="inc-badge">major</span>
+              </div>
+              <div class="incident-summary" id="inc-summary">
+                Elevated 502 error rate (~18%) starting 22:41 UTC.
+              </div>
+              <div class="agent-hint-banner">
+                <strong>PRESCRIPTIVE AGENT HINT:</strong>
+                <span id="inc-hint">Use exponential backoff (min 15s) or defer non-urgent retries.</span>
+              </div>
+            </div>
+
+            <div class="terminal-block">
+              <div class="terminal-header">
+                <span class="terminal-title" id="terminal-endpoint-title">GET /v1/status/stripe</span>
+                <button class="btn-copy" onclick="copySnippet('payload-output')">Copy JSON</button>
+              </div>
+              <pre class="code-view" id="payload-output">// Click any service card on the left to inspect its live compact payload</pre>
+            </div>
+
+            <div style="margin-top:14px;display:flex;gap:10px;">
+              <button class="btn-secondary" style="flex:1;font-size:0.8rem;" onclick="testEtagCache()">
+                <span>⚡</span> Test 304 ETag Cache Hit
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 2: Preflight Simulator -->
+    <div id="tab-preflight" class="tab-pane">
+      <div class="section-panel">
+        <div class="panel-header">
+          <h3><span>🛡️</span> Interactive Preflight Simulator</h3>
+          <span class="etag-tag">POST /v1/preflight</span>
+        </div>
+        <p style="font-size:0.9rem;color:var(--text-secondary);margin-bottom:18px;">
+          Select the dependencies required by your agent's current task. AgentPulse returns a single <strong>pass / degraded / block</strong> verdict in under 10ms, allowing autonomous bots to switch fallbacks or abort before burning tokens.
+        </p>
+
+        <div style="margin-bottom:12px;font-size:0.8rem;font-family:var(--font-mono);color:var(--text-muted);">
+          SELECT DEPENDENCY STACK:
+        </div>
+        <div class="preflight-deps-selector" id="preflight-selector">
+          <!-- Dynamically populated checkboxes -->
+        </div>
+
+        <div style="display:flex;gap:10px;margin-bottom:20px;">
+          <button class="btn-primary" id="btn-run-preflight">
+            <span>⚡</span> Run Preflight Query
+          </button>
+          <button class="btn-secondary" id="btn-reset-preflight">
+            Reset Selection
+          </button>
+          <button class="btn-secondary" id="btn-select-healthy-preflight">
+            Select Healthy Only
+          </button>
+        </div>
+
+        <div class="terminal-block">
+          <div class="terminal-header">
+            <span class="terminal-title">RESPONSE JSON (PREFLIGHT VERDICT)</span>
+            <button class="btn-copy" onclick="copySnippet('preflight-output')">Copy JSON</button>
+          </div>
+          <pre class="code-view" id="preflight-output">// Select dependencies above and click "Run Preflight Query"</pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 3: Stateless HTTP MCP Server -->
+    <div id="tab-mcp" class="tab-pane">
+      <div class="main-grid">
+        <div class="left-col">
+          <div class="section-panel">
+            <div class="panel-header">
+              <h3><span>🔌</span> Model Context Protocol Configuration</h3>
+              <span class="etag-tag">MCP 2024-11-05 Specification</span>
+            </div>
+            <p style="font-size:0.9rem;color:var(--text-secondary);margin-bottom:16px;">
+              AgentPulse exposes a fully stateless, streamable HTTP MCP server that can be queried using standard JSON-RPC 2.0 or lightweight <code>Mcp-Method</code> / <code>Mcp-Name</code> HTTP headers without sticky sessions.
+            </p>
+
+            <div style="margin-bottom:16px;">
+              <div style="font-size:0.8rem;font-family:var(--font-mono);color:var(--accent-indigo);margin-bottom:6px;">CURSOR CONFIG (.cursor/mcp.json):</div>
+              <div class="terminal-block">
+                <div class="terminal-header">
+                  <span class="terminal-title">.cursor/mcp.json</span>
+                  <button class="btn-copy" onclick="copySnippet('cursor-mcp-code')">Copy</button>
+                </div>
+                <pre class="code-view" id="cursor-mcp-code">{
+  "mcpServers": {
+    "agentpulse": {
+      "url": "http://localhost:3000/mcp",
+      "headers": {
+        "Authorization": "Bearer agp_live_demo1234567890abcdef"
+      }
+    }
+  }
+}</pre>
+              </div>
+            </div>
+
+            <div>
+              <div style="font-size:0.8rem;font-family:var(--font-mono);color:var(--accent-cyan);margin-bottom:6px;">CLAUDE CODE CLI COMMAND:</div>
+              <div class="terminal-block">
+                <div class="terminal-header">
+                  <span class="terminal-title">Terminal</span>
+                  <button class="btn-copy" onclick="copySnippet('claude-mcp-cli')">Copy</button>
+                </div>
+                <pre class="code-view" id="claude-mcp-cli">claude mcp add agentpulse http://localhost:3000/mcp \
+  --header "Authorization: Bearer agp_live_demo1234567890abcdef"</pre>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="right-col">
+          <div class="section-panel">
+            <div class="panel-header">
+              <h3><span>🧪</span> Interactive MCP Tool Caller</h3>
+              <span class="etag-tag">POST /mcp</span>
+            </div>
+            <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:14px;">
+              Test MCP tool calls directly from this dashboard:
+            </p>
+
+            <div class="form-group">
+              <label class="form-label" for="mcp-tool-select">Select MCP Tool</label>
+              <select id="mcp-tool-select" class="form-input" style="cursor:pointer;" onchange="updateMcpToolParams()">
+                <option value="check_dependency_health">check_dependency_health (preflight check)</option>
+                <option value="get_service_status">get_service_status (single service status)</option>
+                <option value="lookup_breaking_changes">lookup_breaking_changes (recent deprecations)</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="mcp-tool-args">Tool Arguments (JSON)</label>
+              <textarea id="mcp-tool-args" class="form-input" rows="4" style="resize:vertical;font-size:0.8rem;">{
+  "dependencies": ["stripe", "openai", "aws"]
+}</textarea>
+            </div>
+
+            <button class="btn-primary" style="width:100%;justify-content:center;" onclick="executeSelectedMcpTool()">
+              <span>⚡</span> Invoke MCP Tool
+            </button>
+
+            <div class="terminal-block" style="margin-top:14px;">
+              <div class="terminal-header">
+                <span class="terminal-title">MCP RESULT</span>
+                <button class="btn-copy" onclick="copySnippet('mcp-tool-output')">Copy</button>
+              </div>
+              <pre class="code-view" id="mcp-tool-output">// Result will appear here...</pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 4: Bot Onboarding & Good Citizen Score -->
+    <div id="tab-onboard" class="tab-pane">
+      <div class="main-grid">
+        <div class="left-col">
+          <div class="section-panel">
+            <div class="panel-header">
+              <h3><span>🤖</span> Zero-CAPTCHA Programmatic Bot Registration</h3>
+              <span class="etag-tag">POST /v1/agents/register</span>
+            </div>
+            <p style="font-size:0.9rem;color:var(--text-secondary);margin-bottom:16px;">
+              No friction, no credit card, no human verification. Autonomous agents register themselves by supplying an agent name and an operator URL. A verified free-tier API key (1,000 req/day) is issued instantly.
+            </p>
+
+            <form id="register-form" onsubmit="handleAgentRegistration(event)">
+              <div class="form-group">
+                <label class="form-label" for="reg-agent-name">Agent Name</label>
+                <input type="text" id="reg-agent-name" class="form-input" placeholder="e.g. Claude-Code-CI-Bot" required>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="reg-operator-url">Operator Contact / Repository URL</label>
+                <input type="url" id="reg-operator-url" class="form-input" placeholder="https://github.com/myorg/autonomous-bot" required>
+              </div>
+              <button type="submit" class="btn-primary" style="width:100%;justify-content:center;">
+                <span>🔑</span> Generate Instant API Key (Zero CAPTCHA)
+              </button>
+            </form>
+
+            <div id="reg-result" style="display:none;margin-top:16px;">
+              <div class="terminal-block">
+                <div class="terminal-header">
+                  <span class="terminal-title">ISSUED CREDENTIALS</span>
+                  <button class="btn-copy" onclick="copySnippet('reg-output')">Copy Key</button>
+                </div>
+                <pre class="code-view" id="reg-output"></pre>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="right-col">
+          <div class="section-panel">
+            <div class="panel-header">
+              <h3><span>🌱</span> Good Citizen Protocol (ETag + 304 ROI)</h3>
+              <span class="etag-tag">RFC 9110 Compliant</span>
+            </div>
+            <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:16px;">
+              AI bots polling status pages normally burn 500+ tokens per fetch. AgentPulse implements HTTP <code>ETag</code> and <code>If-None-Match</code>: if the service state is unchanged, the server returns <strong>304 Not Modified</strong> with 0 body bytes (saving 100% tokens) and awards <strong>+2 Good Citizen points</strong>, automatically scaling your daily quota up to 5,000 req/day!
+            </p>
+
+            <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:16px;">
+              <div style="background:rgba(255,255,255,0.02);padding:14px;border-radius:10px;border:1px solid var(--border-subtle);">
+                <div style="font-size:0.75rem;color:var(--text-muted);font-family:var(--font-mono);">WITHOUT AGENTPULSE</div>
+                <div style="font-size:1.1rem;font-weight:700;color:var(--accent-rose);margin:4px 0;">3,400+ Tokens / Day</div>
+                <div style="font-size:0.75rem;color:var(--text-secondary);">Repeatedly debugging mysterious 502s & scraping bloated HTML status pages.</div>
+              </div>
+              <div style="background:rgba(6,182,212,0.05);padding:14px;border-radius:10px;border:1px solid rgba(6,182,212,0.2);">
+                <div style="font-size:0.75rem;color:var(--accent-cyan);font-family:var(--font-mono);">WITH AGENTPULSE (ETag 304)</div>
+                <div style="font-size:1.1rem;font-weight:700;color:var(--accent-emerald);margin:4px 0;">0 Tokens on 304 Hits</div>
+                <div style="font-size:0.75rem;color:var(--text-secondary);">Single sub-50ms preflight call halts retries before wasting token context.</div>
+              </div>
+            </div>
+
+            <div style="font-size:0.8rem;color:var(--text-muted);font-family:var(--font-mono);">
+              TIER UPGRADE LADDER:
+              <br>• Score &gt;= 100: 1,000 req/day (Free Verified)
+              <br>• Score &gt;= 300: 2,500 req/day (Tier 2 Citizen)
+              <br>• Score &gt;= 600: 5,000 req/day (Autonomous Fleet)
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 5: Live SSE Stream & Telemetry -->
+    <div id="tab-stream" class="tab-pane">
+      <div class="main-grid">
+        <div class="left-col">
+          <div class="section-panel">
+            <div class="panel-header">
+              <h3><span>⚡</span> Real-Time SSE Event Stream</h3>
+              <span class="etag-tag">GET /v1/stream</span>
+            </div>
+            <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:12px;">
+              Live stream broadcasting synthetic probe results, incident changes, and system heartbeats every 60 seconds:
+            </p>
+            <div class="stream-logs" id="stream-logs">
+              <div class="log-entry">
+                <span class="log-time">[Init]</span>
+                <span class="log-event">SYSTEM</span>
+                <span class="log-msg">Connecting to edge SSE stream...</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="right-col">
+          <div class="section-panel">
+            <div class="panel-header">
+              <h3><span>📡</span> Crowdsource Outage Telemetry</h3>
+              <span class="etag-tag">POST /v1/telemetry/report</span>
+            </div>
+            <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:14px;">
+              Did your bot encounter an unannounced 502 or rate limit spike? Report it to AgentPulse to alert other agents:
+            </p>
+
+            <form id="telemetry-form" onsubmit="handleTelemetryReport(event)">
+              <div class="form-group">
+                <label class="form-label" for="tel-service">Affected Service</label>
+                <select id="tel-service" class="form-input">
+                  <option value="stripe">Stripe</option>
+                  <option value="openai">OpenAI</option>
+                  <option value="anthropic">Anthropic</option>
+                  <option value="github">GitHub</option>
+                  <option value="aws">AWS</option>
+                  <option value="supabase">Supabase</option>
+                  <option value="vercel">Vercel</option>
+                  <option value="cloudflare">Cloudflare</option>
+                  <option value="resend">Resend</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label" for="tel-endpoint">HTTP Endpoint</label>
+                <input type="text" id="tel-endpoint" class="form-input" value="POST /v1/chat/completions" required>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label" for="tel-error">HTTP Status Code</label>
+                <input type="number" id="tel-error" class="form-input" value="502" required>
+              </div>
+
+              <button type="submit" class="btn-primary" style="width:100%;justify-content:center;">
+                <span>📢</span> Submit Outage Telemetry
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>
