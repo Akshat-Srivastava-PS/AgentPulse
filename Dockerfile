@@ -3,6 +3,10 @@ FROM node:22-alpine AS runtime
 
 WORKDIR /app
 
+# The app runs as the non-root node user but must be able to create its
+# SQLite database in /app — make the workdir writable by that user.
+RUN chown node:node /app
+
 # Ensure non-root user
 USER node
 

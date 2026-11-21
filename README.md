@@ -234,7 +234,7 @@ curl -X PUT http://localhost:3000/v1/agents/me/dependencies \
 # 3. Preflight before a run — impact verdicts included because you have a manifest
 curl -X POST http://localhost:3000/v1/preflight \
   -H "Authorization: Bearer agp_live_..." -H "Content-Type: application/json" \
-  -d '{"services": ["stripe", "openai"]}'
+  -d '{"dependencies": ["stripe", "openai"]}'
 ```
 
 ### Configuration
