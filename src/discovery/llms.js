@@ -22,7 +22,7 @@ export function generateLlmsTxt(origin = 'https://agentpulse.dev') {
 - [Service Status Query](${origin}/v1/status/stripe): GET compact health status, active incidents, affected scope, and prescriptive agent_hint (< 150 tokens).
 - [Delta Feed of Breaking Changes](${origin}/v1/changes): GET recent SDK deprecations and schema mutations since timestamp checkpoint. Add \`?scope=mine\` (auth required) to restrict the feed to your manifest services — and, for entries that declare \`endpoints\`, to changes on those operations. Every change carries a \`playbook_url\`.
 - [Migration Playbook](${origin}/v1/changes/{id}/playbook): GET a structured migration playbook for one breaking change: \`{ change_id, service, kind, summary, steps: [{ action, detail, code_example? }], effort_estimate, risk_notes }\`, generated from the change's own fields (operation, path, parameter/property names, types) — generic templates, no invented vendor facts.
-- [JavaScript SDK](https://www.npmjs.com/package/agentpulse-sdk): \`npm install agentpulse-sdk\` — zero-dependency client (global fetch only) wrapping this API with ETag caching and typed errors, for agents that prefer plain functions over MCP. Source: \`sdk/\` in the AgentPulse repo.
+- [JavaScript SDK](https://www.npmjs.com/package/@sriakshat/agentpulse): \`npm install @sriakshat/agentpulse\` — zero-dependency client (global fetch only) wrapping this API with ETag caching and typed errors, for agents that prefer plain functions over MCP. Source: \`sdk/\` in the AgentPulse repo.
 - [All Monitored Services](${origin}/v1/services): Full catalog of tracked cloud providers, APIs, and registries.
 - [Live Incident Feed](${origin}/v1/incidents): Active incidents with severity ratings and mitigation hints.
 
@@ -195,10 +195,10 @@ curl "${origin}/v1/changes/{change_id}/playbook"
 - Examples are generic fetch-style templates built **only** from the change's own fields (operation, path, parameter/property name, old/new types). Replacement endpoints and parameter semantics are never invented — the playbook defers to the provider hint/changelog for those.
 - Public read (no API key, no quota), cacheable. Unknown change id → \`404\`.
 
-### JavaScript SDK (\`agentpulse-sdk\`)
+### JavaScript SDK (\`@sriakshat/agentpulse\`)
 For agents that prefer plain functions over MCP or raw HTTP: a zero-dependency client (global \`fetch\` only, Node 18+) in the \`sdk/\` directory of the AgentPulse repo.
 \`\`\`js
-import { AgentPulseClient, AgentPulseError } from 'agentpulse-sdk';
+import { AgentPulseClient, AgentPulseError } from '@sriakshat/agentpulse';
 const client = new AgentPulseClient({ baseUrl: '${origin}', apiKey: 'agp_live_...' });
 const status = await client.getStatus('stripe');            // ETag-cached; 304 returns the cached body
 const verdict = await client.preflight(['stripe', 'openai']);
