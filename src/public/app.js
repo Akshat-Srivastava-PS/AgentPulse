@@ -35,7 +35,14 @@ const FALLBACK_SERVICES = [
   { slug: 'postman', name: 'Postman', category: 'dev_tools', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
   { slug: 'shopify', name: 'Shopify', category: 'payments', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
   { slug: 'elevenlabs', name: 'ElevenLabs', category: 'ai_models', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
-  { slug: 'convex', name: 'Convex', category: 'database', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' }
+  { slug: 'convex', name: 'Convex', category: 'database', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
+  { slug: 'linode', name: 'Linode', category: 'cloud_infra', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
+  { slug: 'atlassian', name: 'Atlassian', category: 'dev_tools', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
+  { slug: 'jira', name: 'Jira', category: 'dev_tools', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
+  { slug: 'dropbox', name: 'Dropbox', category: 'cloud_infra', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
+  { slug: 'box', name: 'Box', category: 'cloud_infra', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
+  { slug: 'figma', name: 'Figma', category: 'dev_tools', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
+  { slug: 'airtable', name: 'Airtable', category: 'database', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' }
 ];
 
 document.addEventListener('DOMContentLoaded', async () => {

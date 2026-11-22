@@ -64,7 +64,16 @@ export const STATUSPAGE_REGISTRY = {
   postman: 'https://status.postman.com',
   shopify: 'https://www.shopifystatus.com',
   elevenlabs: 'https://status.elevenlabs.io',
-  convex: 'https://status.convex.dev'
+  convex: 'https://status.convex.dev',
+  // Held services added Nov 2026 (previously validated, held back):
+  // each <base>/api/v2/summary.json was re-verified live before adding.
+  linode: 'https://status.linode.com',
+  atlassian: 'https://status.atlassian.com',
+  jira: 'https://jira-software.status.atlassian.com',
+  dropbox: 'https://status.dropbox.com',
+  box: 'https://status.box.com',
+  figma: 'https://status.figma.com',
+  airtable: 'https://status.airtable.com'
 };
 
 export function getStatuspageRegistry() {

@@ -567,6 +567,83 @@ function seedServiceCatalog(db) {
       latency_ms: 0,
       uptime_percentage: 99.95,
       updated_at: now
+    },
+    {
+      slug: 'linode',
+      name: 'Linode',
+      category: 'cloud_infra',
+      current_status: 'operational',
+      provider_status_page: 'https://status.linode.com',
+      healthcheck_url: 'https://api.linode.com/v4',
+      latency_ms: 0,
+      uptime_percentage: 99.95,
+      updated_at: now
+    },
+    {
+      slug: 'atlassian',
+      name: 'Atlassian',
+      category: 'dev_tools',
+      current_status: 'operational',
+      provider_status_page: 'https://status.atlassian.com',
+      healthcheck_url: 'https://api.atlassian.com',
+      latency_ms: 0,
+      uptime_percentage: 99.95,
+      updated_at: now
+    },
+    {
+      slug: 'jira',
+      name: 'Jira',
+      category: 'dev_tools',
+      current_status: 'operational',
+      provider_status_page: 'https://jira-software.status.atlassian.com',
+      healthcheck_url: 'https://api.atlassian.com',
+      latency_ms: 0,
+      uptime_percentage: 99.95,
+      updated_at: now
+    },
+    {
+      slug: 'dropbox',
+      name: 'Dropbox',
+      category: 'cloud_infra',
+      current_status: 'operational',
+      provider_status_page: 'https://status.dropbox.com',
+      healthcheck_url: 'https://api.dropboxapi.com/2',
+      latency_ms: 0,
+      uptime_percentage: 99.95,
+      updated_at: now
+    },
+    {
+      slug: 'box',
+      name: 'Box',
+      category: 'cloud_infra',
+      current_status: 'operational',
+      provider_status_page: 'https://status.box.com',
+      healthcheck_url: 'https://api.box.com/2.0',
+      latency_ms: 0,
+      uptime_percentage: 99.95,
+      updated_at: now
+    },
+    {
+      slug: 'figma',
+      name: 'Figma',
+      category: 'dev_tools',
+      current_status: 'operational',
+      provider_status_page: 'https://status.figma.com',
+      healthcheck_url: 'https://api.figma.com/v1',
+      latency_ms: 0,
+      uptime_percentage: 99.95,
+      updated_at: now
+    },
+    {
+      slug: 'airtable',
+      name: 'Airtable',
+      category: 'database',
+      current_status: 'operational',
+      provider_status_page: 'https://status.airtable.com',
+      healthcheck_url: 'https://api.airtable.com/v0',
+      latency_ms: 0,
+      uptime_percentage: 99.95,
+      updated_at: now
     }
   ];
 
