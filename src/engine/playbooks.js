@@ -44,7 +44,8 @@ const RE = {
   request_property_type_changed: /^Request property '([^']+)' on ([A-Z]+) (\S+?) changed type from (.+?) to ([^.]+)\./,
   removed_response_property: /^Removed response property '([^']+)' from ([A-Z]+) (\S+?) success responses\./,
   response_property_type_changed: /^Response property '([^']+)' on ([A-Z]+) (\S+?) changed type from (.+?) to ([^.]+)\./,
-  removed_response: /^Success response (\S+?) removed from ([A-Z]+) (\S+?)\./
+  removed_response: /^Success response (\S+?) removed from ([A-Z]+) (\S+?)\./,
+  removed_enum_value: /^Removed enum values? (.+?) from (?:(request|response) property|parameter) '([^']+)'(?: \(in: (\w+)\))? on ([A-Z]+) (\S+?)\./
 };
 
 function matchDetails(kind, m) {
@@ -70,6 +71,8 @@ function matchDetails(kind, m) {
       return { name: m[1], method: m[2], path: m[3], operation: `${m[2]} ${m[3]}` };
     case 'removed_response':
       return { responseCode: m[1], method: m[2], path: m[3], operation: `${m[2]} ${m[3]}` };
+    case 'removed_enum_value':
+      return { values: m[1], name: m[3], location: m[4], method: m[5], path: m[6], operation: `${m[5]} ${m[6]}` };
     default:
       return {};
   }
@@ -365,6 +368,19 @@ const BUILDERS = {
     risk_notes: [
       'Type changes in responses break strict schema validators and typed clients first — check generated types and validation layers.',
       'Persisted historical values keep the old type; migrations or dual-shape handling may be needed.'
+    ]
+  }),
+
+  removed_enum_value: (change, d) => ({
+    effort: 'low',
+    steps: [
+      { action: 'find_usages', detail: `Find every place that sends, expects, or branches on the removed enum value(s) ${d.values || '(see summary)'} for '${d.name || 'the field'}' on ${d.operation || 'the operation'} — request builders, response parsers, switch statements, and validation schemas.` },
+      { action: 'map_or_remove', detail: `Map each removed value to a remaining enum value where the provider documents an equivalent; otherwise remove the code path. Do not invent a mapping the provider does not document.` },
+      testStep(`handling of '${d.name || 'the field'}' without the removed enum value(s) on ${d.operation || 'the operation'}`)
+    ],
+    risk_notes: [
+      'Strict validators and generated clients reject removed enum values immediately; loosely-typed code may pass them through and fail later at the provider.',
+      'Persisted records may still hold the removed values — queries and reports over historical data need a mapping too.'
     ]
   }),
 

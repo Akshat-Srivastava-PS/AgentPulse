@@ -52,6 +52,11 @@ export function hashSpecText(rawText) {
   return crypto.createHash('sha256').update(String(rawText)).digest('hex');
 }
 
+// Max depth for recursive schema walking (nested properties, array items,
+// allOf branches). Pathological or circular schemas are cut off here and by
+// the $ref chain guard in objectChildView().
+const MAX_PROPERTY_DEPTH = 10;
+
 // --- $ref resolution (local refs only, depth-limited) ---
 
 function lookupRef(spec, ref) {
@@ -82,15 +87,15 @@ function schemaType(schema) {
   return null;
 }
 
-function schemaProperties(spec, schema) {
+function schemaProperties(spec, schema, depth = 0) {
   const resolved = resolveRef(spec, schema);
   if (!resolved || typeof resolved !== 'object') return { properties: {}, required: [] };
 
   let properties = { ...(resolved.properties || {}) };
   let required = [...(resolved.required || [])];
-  if (Array.isArray(resolved.allOf)) {
+  if (Array.isArray(resolved.allOf) && depth < MAX_PROPERTY_DEPTH) {
     for (const part of resolved.allOf) {
-      const sub = schemaProperties(spec, part);
+      const sub = schemaProperties(spec, part, depth + 1);
       properties = { ...properties, ...sub.properties };
       required = [...new Set([...required, ...sub.required])];
     }
@@ -164,9 +169,15 @@ function makeChange(kind, breaking, location, summary, migrationHint) {
  *  - removed request-body property; request property that becomes required;
  *    newly required request property; request property type change
  *  - removed response property; response property type change
+ *  - removed enum value on a parameter or a request/response property
  *  - removed 2xx success response
  * Non-breaking: added paths/operations, added optional parameters, added
  * optional request properties, added response properties.
+ *
+ * Property comparison is recursive: nested object properties, array item
+ * schemas, and local $ref targets are all followed (depth- and cycle-guarded),
+ * and locations carry the dotted property path, e.g.
+ * `GET /v1/charges response property customer.email`.
  */
 export function diffOpenApiSpecs(oldSpec, newSpec) {
   const changes = [];
@@ -240,6 +251,9 @@ function diffOperation(oldSpec, newSpec, opKey, oldOp, newOp, changes) {
         `Parameter '${oldParam.name}' (in: ${oldParam.in}) on ${opKey} changed type from ${oldType} to ${newType}.`,
         `Update the value type sent for '${oldParam.name}' on ${opKey} to ${newType}.`));
     }
+    diffEnumValues(changes, `${opKey} param ${key}`,
+      `parameter '${oldParam.name}' (in: ${oldParam.in}) on ${opKey}`,
+      resolveRef(oldSpec, oldParam.schema), resolveRef(newSpec, newParam.schema));
   }
   for (const [key, newParam] of newParams) {
     if (!oldParams.has(key)) {
@@ -255,15 +269,15 @@ function diffOperation(oldSpec, newSpec, opKey, oldOp, newOp, changes) {
     }
   }
 
-  // --- Request body properties ---
+  // --- Request body properties (recursive) ---
   const oldReq = schemaProperties(oldSpec, requestSchema(oldSpec, oldOp.operation));
   const newReq = schemaProperties(newSpec, requestSchema(newSpec, newOp.operation));
-  diffProperties(changes, opKey, 'request', oldReq, newReq);
+  diffProperties(changes, opKey, 'request', oldSpec, newSpec, oldReq, newReq);
 
-  // --- Response properties ---
+  // --- Response properties (recursive) ---
   const oldRes = schemaProperties(oldSpec, successResponseSchema(oldSpec, oldOp.operation));
   const newRes = schemaProperties(newSpec, successResponseSchema(newSpec, newOp.operation));
-  diffProperties(changes, opKey, 'response', oldRes, newRes);
+  diffProperties(changes, opKey, 'response', oldSpec, newSpec, oldRes, newRes);
 
   // --- Removed success responses ---
   const newCodes = new Set(successResponseCodes(newOp.operation));
@@ -276,58 +290,139 @@ function diffOperation(oldSpec, newSpec, opKey, oldOp, newOp, changes) {
   }
 }
 
-function diffProperties(changes, opKey, side, oldSide, newSide) {
+function formatEnumValue(value) {
+  return typeof value === 'string' ? `'${value}'` : JSON.stringify(value);
+}
+
+/**
+ * Emits a breaking `removed_enum_value` change when enum values present in
+ * the old schema are gone from the new one. `label` completes the summary,
+ * e.g. "response property 'status' on GET /v1/charges" or
+ * "parameter 'state' (in: query) on GET /v1/charges". Schemas are expected to
+ * be $ref-resolved by the caller. Dropping an enum entirely (new schema has
+ * none) widens the accepted set and is not reported.
+ */
+function diffEnumValues(changes, location, label, oldSchema, newSchema) {
+  const oldEnum = Array.isArray(oldSchema?.enum) ? oldSchema.enum : null;
+  const newEnum = Array.isArray(newSchema?.enum) ? newSchema.enum : null;
+  if (!oldEnum || !newEnum) return;
+  const newKeys = new Set(newEnum.map(v => JSON.stringify(v)));
+  const removed = oldEnum.filter(v => !newKeys.has(JSON.stringify(v)));
+  if (!removed.length) return;
+  const list = removed.map(formatEnumValue).join(', ');
+  changes.push(makeChange('removed_enum_value', true, location,
+    `Removed enum value${removed.length > 1 ? 's' : ''} ${list} from ${label}.`,
+    `The value${removed.length > 1 ? 's' : ''} ${list} no longer exist for ${label}; map them to a remaining value or remove the code paths that rely on them.`));
+}
+
+/**
+ * Extracts the { properties, required } view of an object-like property
+ * schema, following local $refs and descending through array `items`.
+ * Returns null when the schema does not describe an object with properties,
+ * or when following it would revisit a $ref already on this descent path
+ * (circular schema, e.g. Category.parent -> Category). `viaArray` records
+ * whether the view was reached through `items`; `refChain` is the extended
+ * set of refs followed to reach the view.
+ */
+function objectChildView(spec, schema, refChain) {
+  let current = schema;
+  const chain = new Set(refChain);
+  let viaArray = false;
+  for (let hops = 0; hops <= MAX_PROPERTY_DEPTH; hops++) {
+    if (!current || typeof current !== 'object') return null;
+    if (typeof current.$ref === 'string') {
+      if (chain.has(current.$ref)) return null; // circular $ref — stop descending
+      chain.add(current.$ref);
+    }
+    const resolved = resolveRef(spec, current);
+    if (!resolved || typeof resolved !== 'object') return null;
+    if (resolved.properties || Array.isArray(resolved.allOf)) {
+      const view = schemaProperties(spec, current);
+      return { properties: view.properties, required: view.required, viaArray, refChain: chain };
+    }
+    if (resolved.type === 'array' && resolved.items) {
+      viaArray = true;
+      current = resolved.items;
+      continue;
+    }
+    return null;
+  }
+  return null;
+}
+
+/**
+ * Recursive property diff. `oldSide`/`newSide` are { properties, required }
+ * views of one schema level; `prefix` is the dotted path of that level (''
+ * at the top, `customer` / `line_items[]` below it). Nested levels reuse the
+ * top-level change kinds with the dotted path in location and summary.
+ */
+function diffProperties(changes, opKey, side, oldSpec, newSpec, oldSide, newSide, prefix = '', depth = 0, refChain = new Set()) {
   const isRequest = side === 'request';
+  const dotted = (name) => (prefix ? `${prefix}.${name}` : name);
+
   for (const [name, oldProp] of Object.entries(oldSide.properties)) {
+    const path = dotted(name);
     const newProp = newSide.properties[name];
     if (!newProp) {
       changes.push(makeChange(
         isRequest ? 'removed_request_property' : 'removed_response_property', true,
-        `${opKey} ${side} property ${name}`,
+        `${opKey} ${side} property ${path}`,
         isRequest
-          ? `Removed request property '${name}' from ${opKey}.`
-          : `Removed response property '${name}' from ${opKey} success responses.`,
+          ? `Removed request property '${path}' from ${opKey}.`
+          : `Removed response property '${path}' from ${opKey} success responses.`,
         isRequest
-          ? `Stop sending '${name}' in requests to ${opKey}.`
-          : `Stop reading '${name}' from ${opKey} responses; it is no longer returned.`));
+          ? `Stop sending '${path}' in requests to ${opKey}.`
+          : `Stop reading '${path}' from ${opKey} responses; it is no longer returned.`));
       continue;
     }
     if (isRequest && !oldSide.required.includes(name) && newSide.required.includes(name)) {
-      changes.push(makeChange('request_property_now_required', true, `${opKey} request property ${name}`,
-        `Request property '${name}' on ${opKey} is now required.`,
-        `Always include '${name}' in requests to ${opKey}.`));
+      changes.push(makeChange('request_property_now_required', true, `${opKey} request property ${path}`,
+        `Request property '${path}' on ${opKey} is now required.`,
+        `Always include '${path}' in requests to ${opKey}.`));
     }
-    const oldType = schemaType(resolveRefType(oldProp));
-    const newType = schemaType(resolveRefType(newProp));
+    const oldResolved = resolveRef(oldSpec, oldProp);
+    const newResolved = resolveRef(newSpec, newProp);
+    const oldType = schemaType(oldResolved);
+    const newType = schemaType(newResolved);
     if (oldType && newType && oldType !== newType) {
       changes.push(makeChange(
         isRequest ? 'request_property_type_changed' : 'response_property_type_changed', true,
-        `${opKey} ${side} property ${name}`,
-        `${isRequest ? 'Request' : 'Response'} property '${name}' on ${opKey} changed type from ${oldType} to ${newType}.`,
-        `Update the ${side} handling of '${name}' on ${opKey} to type ${newType}.`));
+        `${opKey} ${side} property ${path}`,
+        `${isRequest ? 'Request' : 'Response'} property '${path}' on ${opKey} changed type from ${oldType} to ${newType}.`,
+        `Update the ${side} handling of '${path}' on ${opKey} to type ${newType}.`));
+    }
+    diffEnumValues(changes, `${opKey} ${side} property ${path}`,
+      `${side} property '${path}' on ${opKey}`, oldResolved, newResolved);
+
+    // Recurse into nested object properties (through array items and $refs).
+    // Descent stops at MAX_PROPERTY_DEPTH, and objectChildView refuses to
+    // follow a $ref already on this path, so circular schemas terminate.
+    if (depth < MAX_PROPERTY_DEPTH) {
+      const oldChild = objectChildView(oldSpec, oldProp, refChain);
+      const newChild = objectChildView(newSpec, newProp, refChain);
+      if (oldChild && newChild && oldChild.viaArray === newChild.viaArray) {
+        const childChain = new Set([...oldChild.refChain, ...newChild.refChain]);
+        diffProperties(changes, opKey, side, oldSpec, newSpec, oldChild, newChild,
+          oldChild.viaArray ? `${path}[]` : path, depth + 1, childChain);
+      }
     }
   }
   for (const name of Object.keys(newSide.properties)) {
     if (!(name in oldSide.properties)) {
+      const path = dotted(name);
       if (isRequest && newSide.required.includes(name)) {
-        changes.push(makeChange('new_required_request_property', true, `${opKey} request property ${name}`,
-          `New required request property '${name}' on ${opKey}.`,
-          `Include '${name}' in every request to ${opKey}.`));
+        changes.push(makeChange('new_required_request_property', true, `${opKey} request property ${path}`,
+          `New required request property '${path}' on ${opKey}.`,
+          `Include '${path}' in every request to ${opKey}.`));
       } else {
         changes.push(makeChange(
           isRequest ? 'added_request_property' : 'added_response_property', false,
-          `${opKey} ${side} property ${name}`,
-          `Added ${side} property '${name}' to ${opKey}.`,
+          `${opKey} ${side} property ${path}`,
+          `Added ${side} property '${path}' to ${opKey}.`,
           'No action required.'));
       }
     }
   }
-}
-
-// Property schemas in fixtures/specs are usually inline; $ref'd property types
-// are compared by their raw shape (refs are not followed for leaf properties).
-function resolveRefType(schema) {
-  return schema;
 }
 
 /** Deterministic breaking-change id for one detected spec change (dedupe key). */

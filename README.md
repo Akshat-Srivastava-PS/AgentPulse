@@ -70,7 +70,7 @@ flowchart TD
     subgraph Engine ["2. Normalizer & diff engine"]
         B1["Deduplication (deterministic IDs)"]
         B2["Severity normalizer (minor / major / critical)"]
-        B3["Breaking-change classifier (13 diff kinds)"]
+        B3["Breaking-change classifier (14 diff kinds)"]
         B4["Agent-hint synthesizer"]
         B5["SHA-256 ETag generator"]
     end
@@ -95,7 +95,7 @@ flowchart TD
 ### 1. Ingestion — where the data comes from
 
 - **Statuspage poller** — every 5 minutes (configurable), polls the public Statuspage summary API of each tracked vendor and maps live incidents into AgentPulse's model. Incidents get deterministic IDs (`sp_<service>_<vendor incident id>`), so repeat polls are no-ops, and an incident that vanishes from a vendor's active list is resolved automatically.
-- **OpenAPI spec-diff worker** — hourly, fetches tracked vendors' published OpenAPI specs, hashes them (SHA-256), and diffs any changed spec against the last snapshot. Thirteen kinds of breaking change are detected (removed path/operation/parameter, parameter becoming required, type/format changes, removed request/response properties, removed success responses, and more); non-breaking changes are logged, not stored. The first fetch of a spec is a baseline — no changes are emitted.
+- **OpenAPI spec-diff worker** — hourly, fetches tracked vendors' published OpenAPI specs, hashes them (SHA-256), and diffs any changed spec against the last snapshot. Fourteen kinds of breaking change are detected (removed path/operation/parameter, parameter becoming required, type/format changes, removed request/response properties — including nested fields, followed through $refs and array items — removed enum values, removed success responses, and more); non-breaking changes are logged, not stored. The first fetch of a spec is a baseline — no changes are emitted.
 - **Synthetic probes** — periodic HTTP health checks per service.
 - **Agent telemetry** — registered agents report observed 5xx spikes; enough corroborating signals surface an incident before any vendor posts one.
 
