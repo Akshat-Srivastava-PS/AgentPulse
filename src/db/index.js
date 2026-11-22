@@ -952,6 +952,32 @@ export function recordOutageSignal({ service_slug, agent_id, endpoint, error_cod
   return { id, service_slug, received_at: now };
 }
 
+/**
+ * Aggregates recorded outage signals for one service since an ISO timestamp:
+ * total count, distinct reporting agents, distinct endpoints, latest report.
+ * This is the read side consumed by the telemetry feedback loop
+ * (src/workers/telemetryLoop.js). COUNT(DISTINCT agent_id) ignores the NULL
+ * agent_id of any unattributed row.
+ */
+export function getRecentOutageSignalStats(serviceSlug, sinceIso) {
+  const db = getDb();
+  const row = db.prepare(`
+    SELECT COUNT(*) AS total,
+           COUNT(DISTINCT agent_id) AS distinct_agents,
+           COUNT(DISTINCT endpoint) AS distinct_endpoints,
+           MAX(received_at) AS latest_at
+    FROM outage_signals
+    WHERE service_slug = ? AND received_at >= ?
+  `).get(serviceSlug, sinceIso);
+
+  return {
+    total: row?.total ?? 0,
+    distinct_agents: row?.distinct_agents ?? 0,
+    distinct_endpoints: row?.distinct_endpoints ?? 0,
+    latest_at: row?.latest_at ?? null
+  };
+}
+
 export function getIncidentById(id) {
   const db = getDb();
   return db.prepare('SELECT * FROM incidents WHERE id = ?').get(id);

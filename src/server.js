@@ -38,6 +38,7 @@ import {
 import { getPlan, listPlans, PLAN_TIERS } from './engine/plans.js';
 import { requestLogContext } from './engine/requestContext.js';
 
+import { scheduleTelemetryEvaluation } from './workers/telemetryLoop.js';
 import { formatCompactStatusPayload } from './engine/normalizer.js';
 import { evaluatePreflight } from './engine/diffEngine.js';
 import { buildPlaybook } from './engine/playbooks.js';
@@ -922,6 +923,10 @@ async function handleRequestInner(req, res, logCtx) {
         error_code: parseInt(error_code, 10),
         error_type
       });
+
+      // Step 2 telemetry loop: clustered reports can trigger an out-of-cycle
+      // spec re-check. Fire-and-forget — never blocks or breaks the 202.
+      scheduleTelemetryEvaluation(service);
 
       return sendJson(res, 202, {
         message: 'Outage signal recorded',

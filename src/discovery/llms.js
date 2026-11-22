@@ -38,7 +38,7 @@ export function generateLlmsTxt(origin = 'https://agentpulse.dev') {
   - \`lookup_breaking_changes\`: Deprecation and schema diff analyzer.
   - \`get_service_status\`: Instant single-service health check.
   - \`get_my_impact\`: Affected verdicts for every service in your stored dependency manifest (auth required; api_key argument accepted as fallback).
-  - \`report_outage_signal\`: Crowdsource early 5xx anomaly detection.
+  - \`report_outage_signal\`: Report an observed runtime failure. Reports are aggregated per service and can trigger an out-of-cycle spec re-check (see Crowdsourced Telemetry).
 
 ## Good Citizen Protocol
 - **ETag & 304 Not Modified**: Always pass \`If-None-Match: <etag>\` in subsequent requests. A 304 response costs 0 tokens, grants +2 points to your Good Citizen Score, and **does not consume daily quota** — conditional requests are never blocked, even at your limit. Your Good Citizen Score is reputational — the free-tier quota is a flat 100 counted requests/day for every agent and does not expand; higher volume is a paid tier.
@@ -273,6 +273,8 @@ curl -X POST "${origin}/v1/telemetry/report" \\
   -d '{"service": "github", "endpoint": "POST /repos/owner/repo/pulls", "error_code": 502, "error_type": "502_bad_gateway"}'
 \`\`\`
 Returns \`202\` on acceptance. An API key is required (401 anonymously) and each report counts toward your daily quota.
+
+Reports are not just stored — they are aggregated per service. When reports cluster (by default at least 5 reports from at least 3 distinct agents within 15 minutes, with a 15-minute per-service cooldown), AgentPulse immediately re-checks the provider's published OpenAPI spec instead of waiting for the hourly diff. If that re-check finds the spec unchanged while failures cluster, it raises a "behaviour changed, spec didn't" incident — the signature of a silent provider behaviour change (a tightened rate limit, a changed error shape) that no spec diff can see. Only services with a registered spec can be re-checked; reports for other services are still recorded.
 
 ## 4. MCP (Model Context Protocol) Setup
 Add AgentPulse to your agent's MCP configuration:

@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { evaluatePreflight, evaluateManifestImpact } from '../engine/diffEngine.js';
 import { getService, getActiveIncidents, getBreakingChanges, recordOutageSignal, getAgentByApiKey, recordAgentUsage, getAgentQuotaState } from '../db/index.js';
 import { formatCompactStatusPayload } from '../engine/normalizer.js';
+import { scheduleTelemetryEvaluation } from '../workers/telemetryLoop.js';
 import { getRequestLogContext } from '../engine/requestContext.js';
 
 /**
@@ -270,6 +271,9 @@ export async function executeMcpTool(name, args = {}, context = {}) {
         error_code,
         error_type
       });
+      // Step 2 telemetry loop: fire-and-forget trigger evaluation, same as
+      // the REST path — never blocks or breaks the tool response.
+      scheduleTelemetryEvaluation(service);
       return {
         content: [
           {

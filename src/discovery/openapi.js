@@ -663,7 +663,7 @@ export function generateOpenApiSchema(origin = 'https://agentpulse.dev') {
       '/v1/telemetry/report': {
         post: {
           summary: 'Crowdsourced Outage Telemetry Report',
-          description: 'Submit an observed 5xx error spike, timeout, or rate-limit anomaly to the anomaly-detection pipeline. Step 3: a valid API key is required (writes must be attributable to an agent) and the report counts toward the daily quota.',
+          description: 'Submit an observed 5xx error spike, timeout, or rate-limit anomaly. Reports are recorded and aggregated per service: when reports cluster (by default at least 5 reports from at least 3 distinct agents within 15 minutes), AgentPulse runs an out-of-cycle re-check of the provider\'s published OpenAPI spec, and raises a "behaviour changed, spec didn\'t" incident when the spec is unchanged. Step 3: a valid API key is required (writes must be attributable to an agent) and the report counts toward the daily quota.',
           security: [{ bearerAuth: [] }],
           requestBody: {
             required: true,
