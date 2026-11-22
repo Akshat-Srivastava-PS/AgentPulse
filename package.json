@@ -7,7 +7,9 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test": "node --test --test-concurrency=1 tests/*.test.js"
+    "pretest": "node -e \"try { fs.unlinkSync('agentpulse.sqlite'); } catch (e) {}\"",
+    "test": "node --test --test-concurrency=1 tests/*.test.js",
+    "posttest": "node -e \"try { fs.unlinkSync('agentpulse.sqlite'); } catch (e) {}\""
   },
   "keywords": [
     "mcp",
@@ -20,5 +22,8 @@
     "ai-tools"
   ],
   "author": "AgentPulse Team",
-  "license": "MIT"
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.0.0"
+  }
 }

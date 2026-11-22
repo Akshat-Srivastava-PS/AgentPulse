@@ -65,13 +65,16 @@ function setCorsHeaders(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, If-None-Match, Mcp-Method, Mcp-Name, Mcp-Session-Id, MCP-Protocol-Version, User-Agent');
-  res.setHeader('Access-Control-Expose-Headers', 'ETag, X-Good-Citizen-Score, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, Retry-After, Mcp-Session-Id');
+  res.setHeader('Access-Control-Expose-Headers', 'ETag, X-Good-Citizen-Score, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, Retry-After, Mcp-Session-Id, X-Request-Id');
 }
 
 // JSON Helper
 function sendJson(res, statusCode, data, headers = {}) {
   setCorsHeaders(res);
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  if (!res.getHeader('x-request-id')) {
+    res.setHeader('X-Request-Id', crypto.randomUUID());
+  }
   for (const [k, v] of Object.entries(headers)) {
     res.setHeader(k, v);
   }
@@ -897,7 +900,10 @@ async function handleRequestInner(req, res, logCtx) {
 
     // 8. Incidents Feed: GET /v1/incidents
     if (pathname === '/v1/incidents' && method === 'GET') {
-      const activeOnly = parsedUrl.searchParams.get('active_only') !== 'false';
+      const statusParam = (parsedUrl.searchParams.get('status') || '').toLowerCase();
+      const activeOnlyParam = parsedUrl.searchParams.get('active_only');
+      // Support both ?status=active (used by the dashboard) and ?active_only=false
+      const activeOnly = statusParam === 'active' || activeOnlyParam !== 'false';
       const incidents = activeOnly ? getActiveIncidents() : getRecentIncidents(50);
       return sendJson(res, 200, {
         count: incidents.length,
@@ -1082,8 +1088,10 @@ async function handleRequestInner(req, res, logCtx) {
     if (method === 'GET') {
       let filePath = path.join(PUBLIC_DIR, pathname === '/' ? 'index.html' : pathname);
 
-      // Security check against directory traversal
-      if (!filePath.startsWith(PUBLIC_DIR)) {
+      // Security check against directory traversal — the path.sep check
+      // prevents a sibling directory with the same prefix (e.g. public_old/)
+      // from passing the startsWith guard.
+      if (filePath !== PUBLIC_DIR && !filePath.startsWith(PUBLIC_DIR + path.sep)) {
         return sendText(res, 403, 'Forbidden');
       }
 
@@ -1114,6 +1122,7 @@ async function handleRequestInner(req, res, logCtx) {
     // 404 Route Not Found
     return sendJson(res, 404, {
       error: `Endpoint not found: ${method} ${pathname}`,
+      hint: 'Use the discovery documents to find available endpoints.',
       discovery: `${origin}/llms.txt`,
       openapi: `${origin}/openapi.json`
     });
@@ -1143,4 +1152,20 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     console.log(`================================================================`);
     startIngestionWorker(60000);
   });
+
+  // Graceful shutdown: allow in-flight requests to drain before exiting.
+  function shutdown(signal) {
+    console.log(`\n[Server] ${signal} received — shutting down gracefully…`);
+    server.close(() => {
+      console.log('[Server] All connections drained. Exiting.');
+      process.exit(0);
+    });
+    // If connections don't close in 10s, force exit.
+    setTimeout(() => {
+      console.error('[Server] Forceful shutdown after timeout.');
+      process.exit(1);
+    }, 10000).unref();
+  }
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 }

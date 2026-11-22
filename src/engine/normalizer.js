@@ -130,6 +130,7 @@ export function formatCompactStatusPayload(service, activeIncidents = [], breaki
   const payload = {
     service: service.slug,
     status: service.current_status,
+    latency_ms: service.latency_ms > 0 ? service.latency_ms : null,
     updated_at: service.updated_at,
     active_incidents: formattedIncidents,
     recent_breaking_changes: formattedChanges

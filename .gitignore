@@ -3,5 +3,7 @@ node_modules/
 *.sqlite-wal
 *.sqlite-shm
 .env
+.env.*
 .DS_Store
 *.tgz
+*.log

@@ -23,6 +23,19 @@ export function getDb() {
   return dbInstance;
 }
 
+/**
+ * Close and discard the current database connection so the next getDb()
+ * call opens a fresh one. Used by the test harness to ensure each test
+ * file starts with a clean, deterministic database (the SQLite file is
+ * deleted externally between runs). Has no effect in production.
+ */
+export function resetDb() {
+  if (dbInstance) {
+    try { dbInstance.close(); } catch { /* already closed */ }
+    dbInstance = null;
+  }
+}
+
 function initSchema(db) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS services (
@@ -1251,9 +1264,11 @@ export function logRequest({ agent_id = null, agent_name = null, method, path: r
     `).run(agent_id, agent_name, method, reqPath, status_code, counted ? 1 : 0, now);
 
     // Opportunistic pruning (~1 in 100 inserts): keep the log bounded to
-    // the last 7 days without a background job.
+    // the last 7 days without a background job. The retention window is
+    // configurable via REQUEST_LOG_RETENTION_DAYS (default 7).
     if (Math.random() < 0.01) {
-      const cutoff = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
+      const retentionDays = parseInt(process.env.REQUEST_LOG_RETENTION_DAYS || '7', 10) || 7;
+      const cutoff = new Date(Date.now() - retentionDays * 24 * 3600 * 1000).toISOString();
       db.prepare('DELETE FROM request_log WHERE created_at < ?').run(cutoff);
     }
   } catch (err) {
