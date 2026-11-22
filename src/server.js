@@ -62,8 +62,8 @@ const HOST = process.env.HOST || '0.0.0.0';
 function setCorsHeaders(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, If-None-Match, Mcp-Method, Mcp-Name, User-Agent');
-  res.setHeader('Access-Control-Expose-Headers', 'ETag, X-Good-Citizen-Score, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, Retry-After');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, If-None-Match, Mcp-Method, Mcp-Name, Mcp-Session-Id, MCP-Protocol-Version, User-Agent');
+  res.setHeader('Access-Control-Expose-Headers', 'ETag, X-Good-Citizen-Score, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, Retry-After, Mcp-Session-Id');
 }
 
 // JSON Helper
@@ -460,7 +460,23 @@ async function handleRequestInner(req, res, logCtx) {
 
     // 2. Stateless HTTP MCP Server Endpoint (/mcp)
     if (pathname === '/mcp') {
-      const body = method === 'POST' ? await parseJsonBody(req).catch(() => ({})) : {};
+      // Streamable HTTP: this server does not offer a server-initiated
+      // SSE stream on GET, so the spec-sanctioned answer is 405.
+      if (method === 'GET') {
+        return sendJson(res, 405, {
+          jsonrpc: '2.0',
+          id: null,
+          error: { code: -32601, message: 'Method Not Allowed: this MCP server does not offer an SSE stream; use POST' }
+        }, { Allow: 'POST' });
+      }
+      if (method !== 'POST') {
+        return sendJson(res, 405, {
+          jsonrpc: '2.0',
+          id: null,
+          error: { code: -32601, message: `Method Not Allowed: ${method} /mcp` }
+        }, { Allow: 'POST' });
+      }
+      const body = await parseJsonBody(req).catch(() => ({}));
       // Owner visibility: only tools/call is logged (tools/list, ping,
       // initialize are protocol chatter, not agent usage).
       const headerMethod = req.headers['mcp-method'];
@@ -468,6 +484,15 @@ async function handleRequestInner(req, res, logCtx) {
         logCtx.shouldLog = true;
       }
       const mcpResponse = await handleMcpRequest(req, body);
+      // JSON-RPC notifications: 202 Accepted, empty body (no JSON at all).
+      if (mcpResponse.empty || mcpResponse.body === null || mcpResponse.status === 202) {
+        setCorsHeaders(res);
+        for (const [k, v] of Object.entries(mcpResponse.headers || {})) {
+          res.setHeader(k, v);
+        }
+        res.writeHead(202);
+        return res.end();
+      }
       return sendJson(res, mcpResponse.status, mcpResponse.body, mcpResponse.headers || {});
     }
 

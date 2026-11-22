@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { evaluatePreflight, evaluateManifestImpact } from '../engine/diffEngine.js';
 import { getService, getActiveIncidents, getBreakingChanges, recordOutageSignal, getAgentByApiKey, recordAgentUsage, getAgentQuotaState } from '../db/index.js';
 import { formatCompactStatusPayload } from '../engine/normalizer.js';
@@ -292,7 +293,29 @@ export async function executeMcpTool(name, args = {}, context = {}) {
  * Handles incoming stateless HTTP MCP requests
  * Supports both JSON-RPC 2.0 and HTTP header-based routing (Mcp-Method / Mcp-Name)
  */
+export const SUPPORTED_PROTOCOL_VERSIONS = ['2024-11-05', '2025-03-26', '2025-06-18'];
+export const LATEST_PROTOCOL_VERSION = '2025-06-18';
+
+export function negotiateProtocolVersion(requested) {
+  if (typeof requested === 'string' && SUPPORTED_PROTOCOL_VERSIONS.includes(requested)) {
+    return requested;
+  }
+  return LATEST_PROTOCOL_VERSION;
+}
+
 export async function handleMcpRequest(req, body = {}) {
+  // JSON-RPC notifications (no `id` member) must never receive a JSON-RPC
+  // response and must not be treated as errors: Streamable HTTP answers
+  // them 202 Accepted with an empty body. This covers
+  // notifications/initialized and any other notification a strict client
+  // sends during the handshake.
+  const isNotification = body && typeof body.method === 'string' &&
+    !('id' in body) && body.id === undefined &&
+    !req.headers['mcp-method'];
+  if (isNotification) {
+    return { status: 202, body: null, empty: true, headers: {} };
+  }
+
   // Check header-based routing first
   const headerMethod = req.headers['mcp-method'];
   const headerName = req.headers['mcp-name'];
@@ -341,13 +364,18 @@ export async function handleMcpRequest(req, body = {}) {
   const { jsonrpc, id, method, params } = body;
 
   if (method === 'initialize') {
+    const negotiatedVersion = negotiateProtocolVersion(params?.protocolVersion);
+    const sessionId = crypto.randomUUID();
     return {
       status: 200,
+      headers: {
+        'mcp-session-id': sessionId
+      },
       body: {
         jsonrpc: '2.0',
-        id: id || 1,
+        id: id ?? 1,
         result: {
-          protocolVersion: '2024-11-05',
+          protocolVersion: negotiatedVersion,
           capabilities: {
             tools: { listChanged: false }
           },

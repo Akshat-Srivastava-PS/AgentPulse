@@ -329,6 +329,83 @@ test('13. MCP Server: Standard JSON-RPC 2.0 initialize, tools/list, and tools/ca
   assert.strictEqual(content.verdict, 'degraded');
 });
 
+test('13b. MCP Server: Streamable HTTP handshake — version negotiation, session id, notifications, GET 405', async () => {
+  // initialize echoes a supported requested version (2025-03-26)
+  const initRes = await dispatchRequest({
+    method: 'POST',
+    url: '/mcp',
+    body: {
+      jsonrpc: '2.0',
+      id: 10,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2025-03-26',
+        capabilities: {},
+        clientInfo: { name: 'strict-validator', version: '1.0' }
+      }
+    }
+  });
+  assert.strictEqual(initRes.status, 200);
+  const initData = await initRes.json();
+  assert.strictEqual(initData.result.protocolVersion, '2025-03-26');
+  const sessionId = initRes.headers.get('mcp-session-id');
+  assert.ok(sessionId && sessionId.length > 0, 'initialize must return an mcp-session-id header');
+
+  // initialize echoes 2025-06-18 and 2024-11-05 when requested
+  for (const version of ['2025-06-18', '2024-11-05']) {
+    const r = await dispatchRequest({
+      method: 'POST',
+      url: '/mcp',
+      body: { jsonrpc: '2.0', id: 11, method: 'initialize', params: { protocolVersion: version, capabilities: {}, clientInfo: { name: 'c', version: '1' } } }
+    });
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual((await r.json()).result.protocolVersion, version);
+    assert.ok(r.headers.get('mcp-session-id'));
+  }
+
+  // unknown / newer requested version falls back to latest supported
+  const futureRes = await dispatchRequest({
+    method: 'POST',
+    url: '/mcp',
+    body: { jsonrpc: '2.0', id: 12, method: 'initialize', params: { protocolVersion: '2099-01-01', capabilities: {}, clientInfo: { name: 'c', version: '1' } } }
+  });
+  assert.strictEqual((await futureRes.json()).result.protocolVersion, '2025-06-18');
+
+  // notifications (no id) -> 202, empty body, never 400
+  const notifRes = await dispatchRequest({
+    method: 'POST',
+    url: '/mcp',
+    body: { jsonrpc: '2.0', method: 'notifications/initialized' }
+  });
+  assert.strictEqual(notifRes.status, 202);
+  assert.strictEqual(await notifRes.text(), '');
+
+  // tools/list works WITH the session header and WITHOUT it (back-compat)
+  for (const headers of [{ 'mcp-session-id': sessionId }, {}]) {
+    const listRes = await dispatchRequest({
+      method: 'POST',
+      url: '/mcp',
+      headers,
+      body: { jsonrpc: '2.0', id: 13, method: 'tools/list' }
+    });
+    assert.strictEqual(listRes.status, 200);
+    const listData = await listRes.json();
+    assert.ok(listData.result.tools.some(t => t.name === 'get_service_status'));
+  }
+
+  // ping still works without a session
+  const pingRes = await dispatchRequest({
+    method: 'POST',
+    url: '/mcp',
+    body: { jsonrpc: '2.0', id: 14, method: 'ping' }
+  });
+  assert.strictEqual(pingRes.status, 200);
+
+  // GET /mcp -> 405 (no server-initiated SSE stream offered)
+  const getRes = await dispatchRequest({ method: 'GET', url: '/mcp' });
+  assert.strictEqual(getRes.status, 405);
+});
+
 test('14. MCP Server: Stateless HTTP Header-based Routing (Mcp-Method / Mcp-Name)', async () => {
   insertStripeIncidentFixture();
   const res = await dispatchRequest({
