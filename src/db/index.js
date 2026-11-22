@@ -34,7 +34,6 @@ function initSchema(db) {
       provider_status_page TEXT,
       healthcheck_url TEXT,
       latency_ms REAL DEFAULT 0,
-      uptime_percentage REAL DEFAULT 99.95,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -245,8 +244,10 @@ function seedServiceCatalog(db) {
   const now = new Date().toISOString();
 
   // Registry of tracked vendors. Every service starts 'operational' with
-  // no latency/uptime measurements — real values are written by the
-  // ingestion workers and synthetic probes as they run.
+  // no latency measurement (latency_ms 0 = not yet measured) — real values
+  // are written by the ingestion workers and synthetic probes as they run.
+  // There is deliberately no uptime figure: uptime was never measured, so
+  // none is stored or served.
   const services = [
     {
       slug: 'stripe',
@@ -256,7 +257,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://status.stripe.com',
       healthcheck_url: 'https://api.stripe.com/healthcheck',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -267,7 +267,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://status.openai.com',
       healthcheck_url: 'https://api.openai.com/v1/models',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -278,7 +277,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://status.anthropic.com',
       healthcheck_url: 'https://api.anthropic.com/v1/messages',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -289,7 +287,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://www.githubstatus.com',
       healthcheck_url: 'https://api.github.com/zen',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -300,7 +297,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://health.aws.amazon.com',
       healthcheck_url: 'https://aws.amazon.com',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -311,7 +307,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://status.supabase.com',
       healthcheck_url: 'https://api.supabase.com',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -322,7 +317,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://www.vercel-status.com',
       healthcheck_url: 'https://api.vercel.com',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -333,7 +327,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://www.cloudflarestatus.com',
       healthcheck_url: 'https://1.1.1.1',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -344,7 +337,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://status.resend.com',
       healthcheck_url: 'https://api.resend.com/emails',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -355,7 +347,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://status.datadoghq.com',
       healthcheck_url: 'https://api.datadoghq.com',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -366,7 +357,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://status.pinecone.io',
       healthcheck_url: 'https://api.pinecone.io',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -377,7 +367,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://status.npmjs.org',
       healthcheck_url: 'https://registry.npmjs.org',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -388,7 +377,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://status.twilio.com',
       healthcheck_url: 'https://api.twilio.com',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -399,7 +387,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://discordstatus.com',
       healthcheck_url: 'https://discord.com/api/v10',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -410,7 +397,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://status.sentry.io',
       healthcheck_url: 'https://sentry.io',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -421,7 +407,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://status.mongodb.com',
       healthcheck_url: 'https://cloud.mongodb.com',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -432,7 +417,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://status.digitalocean.com',
       healthcheck_url: 'https://api.digitalocean.com/v2',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -443,7 +427,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://status.circleci.com',
       healthcheck_url: 'https://circleci.com/api/v2',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -454,7 +437,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://bitbucket.status.atlassian.com',
       healthcheck_url: 'https://api.bitbucket.org/2.0',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -465,7 +447,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://status.zoom.us',
       healthcheck_url: 'https://api.zoom.us/v2',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -476,7 +457,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://status.cohere.com',
       healthcheck_url: 'https://api.cohere.com/v2',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -487,7 +467,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://status.clerk.com',
       healthcheck_url: 'https://api.clerk.com/v1',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -498,7 +477,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://status.render.com',
       healthcheck_url: 'https://api.render.com/v1',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -509,7 +487,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://status.flyio.net',
       healthcheck_url: 'https://api.fly.io',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -520,7 +497,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://status.snowflake.com',
       healthcheck_url: 'https://status.snowflake.com',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -531,7 +507,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://status.elastic.co',
       healthcheck_url: 'https://cloud.elastic.co',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -542,7 +517,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://status.postman.com',
       healthcheck_url: 'https://api.getpostman.com',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -553,7 +527,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://www.shopifystatus.com',
       healthcheck_url: 'https://www.shopify.com',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -564,7 +537,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://status.elevenlabs.io',
       healthcheck_url: 'https://api.elevenlabs.io/v1',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -575,7 +547,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://status.convex.dev',
       healthcheck_url: 'https://api.convex.dev',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -586,7 +557,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://status.linode.com',
       healthcheck_url: 'https://api.linode.com/v4',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -597,7 +567,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://status.atlassian.com',
       healthcheck_url: 'https://api.atlassian.com',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -608,7 +577,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://jira-software.status.atlassian.com',
       healthcheck_url: 'https://api.atlassian.com',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -619,7 +587,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://status.dropbox.com',
       healthcheck_url: 'https://api.dropboxapi.com/2',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -630,7 +597,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://status.box.com',
       healthcheck_url: 'https://api.box.com/2.0',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -641,7 +607,6 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://status.figma.com',
       healthcheck_url: 'https://api.figma.com/v1',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     },
     {
@@ -652,19 +617,18 @@ function seedServiceCatalog(db) {
       provider_status_page: 'https://status.airtable.com',
       healthcheck_url: 'https://api.airtable.com/v0',
       latency_ms: 0,
-      uptime_percentage: 99.95,
       updated_at: now
     }
   ];
 
   const insertService = db.prepare(`
-    INSERT INTO services (slug, name, category, current_status, etag, provider_status_page, healthcheck_url, latency_ms, uptime_percentage, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO services (slug, name, category, current_status, etag, provider_status_page, healthcheck_url, latency_ms, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   for (const s of services) {
     const etag = generateEtag({ slug: s.slug, status: s.current_status, updated_at: s.updated_at });
-    insertService.run(s.slug, s.name, s.category, s.current_status, etag, s.provider_status_page, s.healthcheck_url, s.latency_ms, s.uptime_percentage, s.updated_at);
+    insertService.run(s.slug, s.name, s.category, s.current_status, etag, s.provider_status_page, s.healthcheck_url, s.latency_ms, s.updated_at);
   }
 
   // No incidents or breaking changes are seeded — ever. A fresh database
@@ -681,14 +645,22 @@ function seedServiceCatalog(db) {
 }
 
 // Database helper functions
+// Databases created before the truth pass may still carry a legacy
+// uptime_percentage column (a seeded constant, never measured or
+// updated). It is never served: strip it from every row leaving here.
+function stripUnmeasuredFields(row) {
+  if (row) delete row.uptime_percentage;
+  return row;
+}
+
 export function getService(slug) {
   const db = getDb();
-  return db.prepare('SELECT * FROM services WHERE slug = ?').get(slug);
+  return stripUnmeasuredFields(db.prepare('SELECT * FROM services WHERE slug = ?').get(slug));
 }
 
 export function getAllServices() {
   const db = getDb();
-  return db.prepare('SELECT * FROM services ORDER BY name ASC').all();
+  return db.prepare('SELECT * FROM services ORDER BY name ASC').all().map(stripUnmeasuredFields);
 }
 
 export function updateServiceStatus(slug, current_status, latency_ms = null) {
@@ -940,13 +912,21 @@ export function recordSyntheticProbe({ service_slug, probe_target, status_code, 
   const id = `probe_${crypto.randomUUID().substring(0, 8)}`;
   const now = new Date().toISOString();
 
+  // latency_ms null means the probe produced no measurement (target
+  // unreachable from this host). The probe row records 0 (unmeasured, the
+  // same convention as the service seed) and the service's last measured
+  // latency is left untouched — an invented number is never written.
+  const measured = typeof latency_ms === 'number';
+
   db.prepare(`
     INSERT INTO synthetic_probes (id, service_slug, probe_target, status_code, latency_ms, is_healthy, checked_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(id, service_slug, probe_target, status_code, latency_ms, is_healthy ? 1 : 0, now);
+  `).run(id, service_slug, probe_target, status_code, measured ? latency_ms : 0, is_healthy ? 1 : 0, now);
 
-  // Update current service latency
-  db.prepare('UPDATE services SET latency_ms = ? WHERE slug = ?').run(latency_ms, service_slug);
+  // Update current service latency only from a real measurement
+  if (measured) {
+    db.prepare('UPDATE services SET latency_ms = ? WHERE slug = ?').run(latency_ms, service_slug);
+  }
 }
 
 export function recordOutageSignal({ service_slug, agent_id, endpoint, error_code, error_type }) {
@@ -1485,6 +1465,15 @@ export function downgradeBillingAgent(subscriptionId) {
   return getAgentClientById(agent.id);
 }
 
+// Documented saving assumption behind estimated_tokens_saved: one compact
+// AgentPulse check (a <150-token payload, or a zero-body 304) replaces the
+// full status-page fetch and retry loop an agent would otherwise burn when
+// a dependency misbehaves — estimated at 340 tokens per check. The figure
+// is derived ONLY from real request_log rows for the current day (counted
+// requests + 304 responses). There is no constant base: a deployment with
+// no traffic today honestly reports 0.
+const TOKENS_SAVED_PER_CHECK = 340;
+
 export function getSystemMetrics() {
   const db = getDb();
   const totalServices = db.prepare('SELECT count(*) as count FROM services').get().count;
@@ -1495,6 +1484,11 @@ export function getSystemMetrics() {
   const totalBreakingChanges = db.prepare('SELECT count(*) as count FROM breaking_changes').get().count;
   const totalAgents = db.prepare('SELECT count(*) as count FROM agent_clients').get().count;
   const totalRequestsToday = db.prepare('SELECT COALESCE(SUM(requests_today), 0) as total FROM agent_clients').get().total;
+
+  const now = new Date();
+  const todayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+  const countedToday = db.prepare('SELECT count(*) as count FROM request_log WHERE counted = 1 AND created_at >= ?').get(todayStart).count;
+  const notModifiedToday = db.prepare('SELECT count(*) as count FROM request_log WHERE status_code = 304 AND created_at >= ?').get(todayStart).count;
 
   return {
     services: {
@@ -1507,6 +1501,6 @@ export function getSystemMetrics() {
     total_breaking_changes: totalBreakingChanges,
     registered_agents: totalAgents,
     requests_today: totalRequestsToday,
-    estimated_tokens_saved: totalRequestsToday * 340 + 2481000 // Tokens saved by avoiding retry loops & 304 hits
+    estimated_tokens_saved: (countedToday + notModifiedToday) * TOKENS_SAVED_PER_CHECK
   };
 }

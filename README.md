@@ -101,7 +101,7 @@ flowchart TD
 
 Both network workers fail gracefully: a failed fetch or parse is logged and skipped, never crashing the server.
 
-**Tracked vendors** (status, 30 total): OpenAI, Anthropic, GitHub, AWS, Vercel, Cloudflare, Supabase, Datadog, Resend, npm, Pinecone, Twilio, Discord, Sentry, MongoDB Atlas, DigitalOcean, CircleCI, Bitbucket, Zoom, Cohere, Clerk, Render, Fly.io, Snowflake, Elastic Cloud, Postman, Shopify, ElevenLabs, Convex — plus Stripe behind the same generic Statuspage mechanism (its feed is polled when the payload shape matches). Every Statuspage-backed vendor above was added only after its live `<base>/api/v2/summary.json` feed was fetched and verified to return valid Statuspage summary JSON. **Tracked specs** (diff): Stripe and GitHub publish JSON specs; OpenAI's canonical spec is YAML and is skipped until a JSON mirror is configured via `SPEC_SOURCES_JSON`.
+**Tracked vendors** (status, 30 total): OpenAI, Anthropic, GitHub, AWS, Vercel, Cloudflare, Supabase, Datadog, Resend, npm, Pinecone, Twilio, Discord, Sentry, MongoDB Atlas, DigitalOcean, CircleCI, Bitbucket, Zoom, Cohere, Clerk, Render, Fly.io, Snowflake, Elastic Cloud, Postman, Shopify, ElevenLabs, Convex — plus Stripe behind the same generic Statuspage mechanism (its feed is polled when the payload shape matches). Every Statuspage-backed vendor above was added only after its live `<base>/api/v2/summary.json` feed was fetched and verified to return valid Statuspage summary JSON. **Tracked specs** (diff, 15 vendors): Bitbucket, Box, CircleCI, Cloudflare, Discord, Elastic (Elasticsearch API), ElevenLabs, GitHub, Jira, Linode, OpenAI, Stripe, Supabase (Management API), Twilio, Vercel. Every registered spec URL was verified live to return a JSON OpenAPI document before being added; vendors that publish YAML-only specs (Datadog, MongoDB Atlas, DigitalOcean) or no OpenAPI spec at all are status-tracked only. The registry can be overridden via `SPEC_SOURCES_JSON`.
 
 ### 2. The engine — turning noise into verdicts
 
@@ -346,7 +346,7 @@ Dockerfile           node:22-alpine, non-root, healthcheck on /v1/metrics
 AgentPulse is a working, fully tested implementation (49/49 tests) being deployed publicly for the first time. Known limitations, stated plainly:
 
 - **Impact is service-level**, not version-level (see §3 above).
-- **OpenAI's spec** is YAML-only today; its diff feed activates when a JSON mirror is configured.
+- **Spec-diff coverage is partial**: 15 of the tracked vendors publish a JSON OpenAPI spec and are diffed hourly; the rest are status-tracked only (YAML-only or no published spec).
 - **Free-tier hosting sleeps when idle** and the local SQLite file resets on redeploy — fine for evaluation; a paid tier / external database is the production path.
 - The **SDK is not on npm yet**; use it from `sdk/` until it's published.
 - **No sample data, ever.** The service serves only live-ingested data: a fresh install's catalog starts with zero incidents and zero breaking changes, and the first Statuspage poll (within one poll interval — 5 minutes by default) populates real incidents, while the spec-diff worker adds real breaking changes as vendor specs change. Until the first poll lands, services honestly report `operational` with empty incident lists.

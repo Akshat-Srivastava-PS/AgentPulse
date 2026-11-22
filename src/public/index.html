@@ -38,7 +38,7 @@
         </a>
         <div class="live-indicator">
           <div class="pulsing-dot"></div>
-          <span id="live-status-text">EDGE LIVE</span>
+          <span id="live-status-text">CONNECTING</span>
         </div>
       </nav>
     </header>
@@ -79,23 +79,23 @@
     <div class="stats-grid">
       <div class="stat-card">
         <div class="stat-label">Monitored Dependencies</div>
-        <div class="stat-value" id="stat-total-services">12</div>
+        <div class="stat-value" id="stat-total-services">—</div>
         <div class="stat-sub">AWS, Stripe, OpenAI, GitHub, etc.</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">Active Incidents</div>
-        <div class="stat-value" id="stat-active-incidents" style="color:var(--accent-amber);">1</div>
-        <div class="stat-sub" id="stat-incident-sub">Stripe (Payment Intents degraded)</div>
+        <div class="stat-value" id="stat-active-incidents" style="color:var(--accent-amber);">—</div>
+        <div class="stat-sub" id="stat-incident-sub">Across all monitored services</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">Tokens Saved Today</div>
-        <div class="stat-value" id="stat-tokens-saved">2,489,840</div>
+        <div class="stat-value" id="stat-tokens-saved">0</div>
         <div class="stat-sub">Preempted 5xx retry loops</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">Edge Cache P99 Latency</div>
-        <div class="stat-value" style="color:var(--accent-cyan);">9.4<span style="font-size:1rem;color:var(--text-muted);">ms</span></div>
-        <div class="stat-sub">ETag 304 Zero-Body protocol</div>
+        <div class="stat-label">Registered Agents</div>
+        <div class="stat-value" id="stat-registered-agents" style="color:var(--accent-cyan);">—</div>
+        <div class="stat-sub">Self-registered via the API</div>
       </div>
     </div>
 
@@ -108,7 +108,7 @@
             <div class="panel-header">
               <h3><span>📡</span> Live Monitored Dependencies</h3>
               <div class="panel-actions">
-                <span id="service-count-badge" class="etag-tag">12 Tracking</span>
+                <span id="service-count-badge" class="etag-tag">— Tracking</span>
               </div>
             </div>
 
@@ -141,15 +141,15 @@
 
             <div class="incident-box" id="incident-box-wrapper">
               <div class="incident-box-header">
-                <span class="incident-scope" id="inc-scope">POST /v1/payment_intents (us-east-1)</span>
-                <span class="status-badge degraded" id="inc-badge">major</span>
+                <span class="incident-scope" id="inc-scope">—</span>
+                <span class="status-badge" id="inc-badge">—</span>
               </div>
               <div class="incident-summary" id="inc-summary">
-                Elevated 502 error rate (~18%) starting 22:41 UTC.
+                Click any service card on the left to inspect its live status.
               </div>
               <div class="agent-hint-banner">
                 <strong>PRESCRIPTIVE AGENT HINT:</strong>
-                <span id="inc-hint">Use exponential backoff (min 15s) or defer non-urgent retries.</span>
+                <span id="inc-hint">—</span>
               </div>
             </div>
 

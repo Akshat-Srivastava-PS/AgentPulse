@@ -24,16 +24,38 @@ import {
 
 /**
  * Service slug -> OpenAPI spec URL (JSON).
- * Stripe and GitHub publish JSON specs on GitHub raw. OpenAI's canonical
- * openai-openapi repo publishes YAML; its entry points at that document and
- * the poller will log-and-skip it (non-JSON) until a JSON mirror is set via
- * SPEC_SOURCES_JSON, e.g.
+ *
+ * Every URL below was verified live (Nov 2026) to return a document that
+ * JSON.parses as OpenAPI with a non-empty `paths` object — the poller
+ * parses what it fetches and log-and-skips anything else, so a YAML or
+ * HTML source would silently never diff. Sources are the vendors' own
+ * repos, docs hosts, or API hosts. OpenAI's openai-openapi repo ships
+ * openapi.json alongside its canonical YAML; the JSON file is the entry
+ * used here. Vendors that publish YAML-only specs (Datadog, MongoDB
+ * Atlas, DigitalOcean) or no OpenAPI spec at all are intentionally
+ * absent — they are status-tracked only.
+ *
+ * Override the whole map at runtime with SPEC_SOURCES_JSON, e.g.
  *   SPEC_SOURCES_JSON='{"openai":"https://example.com/openai.json"}'
  */
 export const SPEC_REGISTRY = {
-  stripe: 'https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json',
+  bitbucket: 'https://developer.atlassian.com/cloud/bitbucket/swagger.v3.json',
+  box: 'https://raw.githubusercontent.com/box/box-openapi/main/openapi.json',
+  circleci: 'https://circleci.com/docs/api/v2/openapi.json',
+  cloudflare: 'https://raw.githubusercontent.com/cloudflare/api-schemas/main/openapi.json',
+  discord: 'https://raw.githubusercontent.com/discord/discord-api-spec/main/specs/openapi.json',
+  // Elasticsearch API spec (generated output of the specification repo).
+  elastic: 'https://raw.githubusercontent.com/elastic/elasticsearch-specification/main/output/openapi/elasticsearch-openapi.json',
+  elevenlabs: 'https://api.elevenlabs.io/openapi.json',
   github: 'https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json',
-  openai: 'https://raw.githubusercontent.com/openai/openai-openapi/master/openapi.yaml'
+  jira: 'https://developer.atlassian.com/cloud/jira/platform/swagger-v3.v3.json',
+  linode: 'https://raw.githubusercontent.com/linode/linode-api-docs/development/openapi.json',
+  openai: 'https://raw.githubusercontent.com/openai/openai-openapi/master/openapi.json',
+  stripe: 'https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json',
+  // Supabase Management API spec (the platform API, from the docs spec dir).
+  supabase: 'https://raw.githubusercontent.com/supabase/supabase/master/apps/docs/spec/api_v1_openapi.json',
+  twilio: 'https://raw.githubusercontent.com/twilio/twilio-oai/main/spec/json/twilio_api_v2010.json',
+  vercel: 'https://openapi.vercel.sh/'
 };
 
 export function getSpecRegistry() {

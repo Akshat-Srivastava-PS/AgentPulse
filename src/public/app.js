@@ -4,46 +4,10 @@ let currentFilter = 'all';
 let selectedServiceSlug = 'stripe';
 let currentServiceEtag = '';
 
-// Fallback baseline services if backend is unreachable or opening via file://
-const FALLBACK_SERVICES = [
-  { slug: 'stripe', name: 'Stripe', category: 'payments', current_status: 'operational', latency_ms: 66, etag: 'W/"a32c7a1b72122fa1"' },
-  { slug: 'openai', name: 'OpenAI API', category: 'ai_models', current_status: 'operational', latency_ms: 143, etag: 'W/"edf29f6166684e8d"' },
-  { slug: 'anthropic', name: 'Anthropic Claude API', category: 'ai_models', current_status: 'operational', latency_ms: 51, etag: 'W/"874b377842acffde"' },
-  { slug: 'github', name: 'GitHub Platform & Actions', category: 'dev_tools', current_status: 'operational', latency_ms: 100, etag: 'W/"897cf57054405d02"' },
-  { slug: 'aws', name: 'Amazon Web Services (AWS)', category: 'cloud_infra', current_status: 'operational', latency_ms: 127, etag: 'W/"ffb4d83648ef4683"' },
-  { slug: 'supabase', name: 'Supabase Platform', category: 'database', current_status: 'operational', latency_ms: 80, etag: 'W/"730edab5ef687f31"' },
-  { slug: 'vercel', name: 'Vercel Edge Network', category: 'hosting', current_status: 'operational', latency_ms: 338, etag: 'W/"3735c4ecb0b3ca1c"' },
-  { slug: 'cloudflare', name: 'Cloudflare Edge & Workers', category: 'cloud_infra', current_status: 'operational', latency_ms: 96, etag: 'W/"cd08c3b8ca7e94da"' },
-  { slug: 'resend', name: 'Resend Transactional Email', category: 'communications', current_status: 'operational', latency_ms: 73, etag: 'W/"b6352fbcf76f5512"' },
-  { slug: 'datadog', name: 'Datadog Observability', category: 'observability', current_status: 'operational', latency_ms: 76, etag: 'W/"3d7c151a3f14ba18"' },
-  { slug: 'pinecone', name: 'Pinecone Vector DB', category: 'database', current_status: 'operational', latency_ms: 267, etag: 'W/"9869d9a8402404c7"' },
-  { slug: 'npm', name: 'npm Package Registry', category: 'dev_tools', current_status: 'operational', latency_ms: 57, etag: 'W/"eb2a7b8264fde523"' },
-  { slug: 'twilio', name: 'Twilio', category: 'communications', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
-  { slug: 'discord', name: 'Discord', category: 'communications', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
-  { slug: 'sentry', name: 'Sentry', category: 'observability', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
-  { slug: 'mongodb', name: 'MongoDB Atlas', category: 'database', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
-  { slug: 'digitalocean', name: 'DigitalOcean', category: 'cloud_infra', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
-  { slug: 'circleci', name: 'CircleCI', category: 'dev_tools', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
-  { slug: 'bitbucket', name: 'Atlassian Bitbucket', category: 'dev_tools', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
-  { slug: 'zoom', name: 'Zoom', category: 'communications', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
-  { slug: 'cohere', name: 'Cohere API', category: 'ai_models', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
-  { slug: 'clerk', name: 'Clerk', category: 'dev_tools', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
-  { slug: 'render', name: 'Render', category: 'hosting', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
-  { slug: 'flyio', name: 'Fly.io', category: 'hosting', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
-  { slug: 'snowflake', name: 'Snowflake', category: 'database', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
-  { slug: 'elastic', name: 'Elastic Cloud', category: 'observability', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
-  { slug: 'postman', name: 'Postman', category: 'dev_tools', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
-  { slug: 'shopify', name: 'Shopify', category: 'payments', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
-  { slug: 'elevenlabs', name: 'ElevenLabs', category: 'ai_models', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
-  { slug: 'convex', name: 'Convex', category: 'database', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
-  { slug: 'linode', name: 'Linode', category: 'cloud_infra', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
-  { slug: 'atlassian', name: 'Atlassian', category: 'dev_tools', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
-  { slug: 'jira', name: 'Jira', category: 'dev_tools', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
-  { slug: 'dropbox', name: 'Dropbox', category: 'cloud_infra', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
-  { slug: 'box', name: 'Box', category: 'cloud_infra', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
-  { slug: 'figma', name: 'Figma', category: 'dev_tools', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' },
-  { slug: 'airtable', name: 'Airtable', category: 'database', current_status: 'operational', latency_ms: 0, etag: 'W/"offline-placeholder"' }
-];
+// There is NO fallback dataset. If the API is unreachable the dashboard
+// shows an explicit unavailable state — invented services, statuses, or
+// latencies are never rendered as if they were live data.
+let servicesUnavailable = false;
 
 document.addEventListener('DOMContentLoaded', async () => {
   setupTabNavigation();
@@ -104,8 +68,11 @@ async function loadInitialData() {
 
     if (servicesRes && Array.isArray(servicesRes.services)) {
       allServices = servicesRes.services;
+      servicesUnavailable = false;
     } else {
-      allServices = FALLBACK_SERVICES;
+      // API unreachable: show the unavailable state, never invented data.
+      allServices = [];
+      servicesUnavailable = true;
     }
 
     renderServicesList();
@@ -115,8 +82,9 @@ async function loadInitialData() {
       updateMetrics(metricsRes);
     }
   } catch (err) {
-    console.warn('Using baseline data fallback:', err);
-    allServices = FALLBACK_SERVICES;
+    console.warn('Live data unavailable:', err);
+    allServices = [];
+    servicesUnavailable = true;
     renderServicesList();
     renderPreflightDependencies();
   }
@@ -129,14 +97,16 @@ function updateMetrics(metrics) {
 
   const incEl = document.getElementById('stat-active-incidents');
   if (incEl) incEl.textContent = metrics.active_incidents || 0;
-  
-  if (metrics.estimated_tokens_saved) {
-    const tokenEl = document.getElementById('stat-tokens-saved');
-    if (tokenEl) tokenEl.textContent = Number(metrics.estimated_tokens_saved).toLocaleString();
-  }
+
+  // Always written, including an honest 0 when nothing was saved today.
+  const tokenEl = document.getElementById('stat-tokens-saved');
+  if (tokenEl) tokenEl.textContent = Number(metrics.estimated_tokens_saved || 0).toLocaleString();
+
+  const agentsEl = document.getElementById('stat-registered-agents');
+  if (agentsEl) agentsEl.textContent = metrics.registered_agents ?? '—';
 
   const badge = document.getElementById('service-count-badge');
-  if (badge) badge.textContent = `${allServices.length} Tracking`;
+  if (badge) badge.textContent = servicesUnavailable ? 'Unavailable' : `${allServices.length} Tracking`;
 }
 
 function renderServicesList() {
@@ -144,9 +114,19 @@ function renderServicesList() {
   if (!container) return;
   container.innerHTML = '';
 
-  const filtered = currentFilter === 'all' 
-    ? allServices 
+  const filtered = currentFilter === 'all'
+    ? allServices
     : allServices.filter(s => s.category === currentFilter);
+
+  if (filtered.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'service-card';
+    empty.textContent = servicesUnavailable
+      ? 'Live data unavailable — the AgentPulse API could not be reached. No status is claimed for any service right now.'
+      : 'No services in this category.';
+    container.appendChild(empty);
+    return;
+  }
 
   filtered.forEach(service => {
     const card = document.createElement('div');
@@ -166,7 +146,7 @@ function renderServicesList() {
         </span>
       </div>
       <div class="service-meta">
-        <span>${service.latency_ms ? service.latency_ms.toFixed(1) + 'ms' : 'Active'}</span>
+        <span>${service.latency_ms ? service.latency_ms.toFixed(1) + 'ms' : '—'}</span>
         <span class="etag-tag">${service.etag || 'W/"live"'}</span>
       </div>
     `;
@@ -235,24 +215,32 @@ async function selectService(slug) {
       document.getElementById('inc-scope').textContent = 'All Systems Operational';
       document.getElementById('inc-badge').textContent = 'operational';
       document.getElementById('inc-badge').className = 'status-badge operational';
-      document.getElementById('inc-summary').textContent = `No active incidents reported for ${data.service}. Sub-50ms latency.`;
+      document.getElementById('inc-summary').textContent = `No active incidents reported for ${data.service}.`;
       document.getElementById('inc-hint').textContent = 'All systems nominal. Safe for automated high-concurrency tool execution.';
     }
   } catch (err) {
-    console.warn(`Could not fetch live status for ${slug}, showing offline placeholder payload:`, err);
-    // Display an honest placeholder so UI never breaks — no fabricated
-    // incidents: the backend is unreachable, so nothing is claimed about
-    // the service's real state.
-    const fallbackData = {
+    console.warn(`Could not fetch live status for ${slug}:`, err);
+    // The backend is unreachable, so nothing is claimed about the
+    // service's real state: the payload says "unknown" outright rather
+    // than dressing a guess up as a status response.
+    const unknownData = {
       service: slug,
-      status: 'operational',
-      updated_at: new Date().toISOString(),
-      active_incidents: [],
-      recent_breaking_changes: []
+      status: 'unknown',
+      error: 'Live status unavailable — the AgentPulse API could not be reached, so no status is claimed for this service.'
     };
 
     const outputEl = document.getElementById('payload-output');
-    if (outputEl) outputEl.textContent = JSON.stringify(fallbackData, null, 2);
+    if (outputEl) outputEl.textContent = JSON.stringify(unknownData, null, 2);
+
+    const incBox = document.getElementById('incident-box-wrapper');
+    if (incBox) {
+      incBox.style.display = 'block';
+      document.getElementById('inc-scope').textContent = 'Status unknown';
+      document.getElementById('inc-badge').textContent = 'unknown';
+      document.getElementById('inc-badge').className = 'status-badge';
+      document.getElementById('inc-summary').textContent = unknownData.error;
+      document.getElementById('inc-hint').textContent = '—';
+    }
   }
 }
 
@@ -538,7 +526,7 @@ function connectLiveStream() {
 
     eventSource.addEventListener('heartbeat', e => {
       const data = JSON.parse(e.data);
-      appendStreamLog('HEARTBEAT', `Synthetic probes nominal across ${data.services_checked} dependencies`);
+      appendStreamLog('HEARTBEAT', `Ingestion cycle checked ${data.services_checked} dependencies`);
     });
 
     eventSource.onerror = () => {

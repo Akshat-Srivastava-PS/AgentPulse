@@ -14,7 +14,6 @@ CREATE TABLE IF NOT EXISTS services (
     provider_status_page VARCHAR(255),
     healthcheck_url VARCHAR(255),
     latency_ms REAL DEFAULT 0,
-    uptime_percentage REAL DEFAULT 99.95,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 

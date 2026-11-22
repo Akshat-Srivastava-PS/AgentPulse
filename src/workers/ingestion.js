@@ -18,7 +18,7 @@ eventBroadcaster.setMaxListeners(200);
 let workerInterval = null;
 let isPolling = false;
 
-// Simulated realistic health endpoints & synthetic probes
+// Synthetic probe targets: the real health endpoints probed per service
 const SYNTHETIC_TARGETS = {
   stripe: 'https://api.stripe.com/healthcheck',
   openai: 'https://api.openai.com/v1/models',
@@ -36,8 +36,11 @@ const SYNTHETIC_TARGETS = {
 
 /**
  * Executes a single synthetic probe against a target service.
- * In a real environment with internet access, issues an HTTP HEAD/GET with timeout.
- * When in an isolated sandbox or offline, produces accurate simulated probe telemetry.
+ * Issues a real HTTP HEAD with a short timeout and records only what was
+ * actually measured. When the target cannot be reached from this host, the
+ * probe records status_code 0 with NO latency measurement — an unreachable
+ * target says nothing about the service's health or speed, so no status
+ * code or latency is ever invented for it.
  */
 export async function executeSyntheticProbe(serviceSlug) {
   const service = getService(serviceSlug);
@@ -67,14 +70,18 @@ export async function executeSyntheticProbe(serviceSlug) {
       latencyMs = Date.now() - start;
       isHealthy = res.status < 500;
     } else {
-      // Offline fallback: maintain realistic baseline latency
-      latencyMs = Math.round(service.latency_ms * (0.95 + Math.random() * 0.1));
-      statusCode = service.current_status === 'outage' ? 503 : (service.current_status === 'degraded' ? 502 : 200);
-      isHealthy = statusCode < 500;
+      // No response received: record the attempt honestly — status_code 0
+      // and latencyMs null (unmeasured). The service's last measured
+      // latency stays untouched (see recordSyntheticProbe), and no health
+      // verdict is derived from our own network failure.
+      statusCode = 0;
+      latencyMs = null;
+      isHealthy = true;
     }
   } catch (err) {
-    latencyMs = Math.round(service.latency_ms || 45);
-    statusCode = 200;
+    // Same honesty rule as the no-response path above.
+    statusCode = 0;
+    latencyMs = null;
     isHealthy = true;
   }
 

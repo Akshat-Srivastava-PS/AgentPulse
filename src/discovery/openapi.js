@@ -613,7 +613,7 @@ export function generateOpenApiSchema(origin = 'https://agentpulse.dev') {
       '/v1/services': {
         get: {
           summary: 'List All Monitored Services',
-          description: 'Returns full list of services, categories, latency, uptime, and current health status.',
+          description: 'Returns full list of services, categories, last measured latency, and current health status.',
           responses: {
             '200': {
               description: 'List of tracked services',
