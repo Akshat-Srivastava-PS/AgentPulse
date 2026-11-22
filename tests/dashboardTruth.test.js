@@ -78,3 +78,26 @@ test('94. Truth: dashboard sources contain no fabricated figures or fallback dat
   assert.ok(!dbJs.includes('2481000'), 'db layer still adds the constant tokens-saved base');
   assert.ok(!dbJs.includes('99.95'), 'db layer still seeds the invented uptime figure');
 });
+
+test('95. Truth: per-service incident visibility is rendered only from the live incidents response', async () => {
+  const res = await dispatchRequest({ url: '/v1/incidents?status=active' });
+  assert.strictEqual(res.status, 200);
+  const data = await res.json();
+  assert.ok(Array.isArray(data.incidents));
+  // The feed and the metrics counter read the same incidents table, so
+  // the per-service breakdown can never disagree with the headline stat.
+  assert.strictEqual(data.count, getSystemMetrics().active_incidents);
+  for (const incident of data.incidents) {
+    assert.ok(incident.service_slug, 'active incident is missing the service_slug the dashboard groups by');
+  }
+
+  const html = readFileSync(new URL('../src/public/index.html', import.meta.url), 'utf8');
+  const appJs = readFileSync(new URL('../src/public/app.js', import.meta.url), 'utf8');
+
+  assert.ok(html.includes('id="stat-incident-breakdown"'), 'index.html is missing the incident breakdown container');
+  assert.ok(appJs.includes("/v1/incidents?status=active"), 'app.js does not fetch the live incidents feed');
+  assert.ok(appJs.includes('incidentCountsByService'), 'app.js does not group incidents per service');
+  // Breakdown rows ("Name · N") are produced by JS from the response —
+  // the static HTML must never ship a baked-in per-service count.
+  assert.ok(!/·\s*\d/.test(html), 'index.html hardcodes a per-service incident count');
+});

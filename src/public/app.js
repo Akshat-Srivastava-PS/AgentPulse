@@ -9,6 +9,12 @@ let currentServiceEtag = '';
 // latencies are never rendered as if they were live data.
 let servicesUnavailable = false;
 
+// Active incident counts per service slug, grouped ONLY from the live
+// GET /v1/incidents response. null = not loaded or fetch failed, in
+// which case no incident badges or breakdown are rendered at all —
+// counts are never invented or carried over from a previous load.
+let incidentCountsByService = null;
+
 document.addEventListener('DOMContentLoaded', async () => {
   setupTabNavigation();
   setupFilterButtons();
@@ -61,9 +67,10 @@ function setupTabNavigation() {
 
 async function loadInitialData() {
   try {
-    const [servicesRes, metricsRes] = await Promise.all([
+    const [servicesRes, metricsRes, incidentsRes] = await Promise.all([
       fetch('/v1/services').then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch('/v1/metrics').then(r => r.ok ? r.json() : null).catch(() => null)
+      fetch('/v1/metrics').then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch('/v1/incidents?status=active').then(r => r.ok ? r.json() : null).catch(() => null)
     ]);
 
     if (servicesRes && Array.isArray(servicesRes.services)) {
@@ -75,8 +82,26 @@ async function loadInitialData() {
       servicesUnavailable = true;
     }
 
+    // Group the live incidents payload per service. The payload itself
+    // is the single source for both the card badges and the breakdown,
+    // so the two can never disagree. A failed fetch clears the counts:
+    // nothing is rendered rather than stale or invented numbers.
+    if (incidentsRes && Array.isArray(incidentsRes.incidents)) {
+      incidentCountsByService = new Map();
+      for (const incident of incidentsRes.incidents) {
+        if (!incident.service_slug) continue;
+        incidentCountsByService.set(
+          incident.service_slug,
+          (incidentCountsByService.get(incident.service_slug) || 0) + 1
+        );
+      }
+    } else {
+      incidentCountsByService = null;
+    }
+
     renderServicesList();
     renderPreflightDependencies();
+    renderIncidentBreakdown();
 
     if (metricsRes) {
       updateMetrics(metricsRes);
@@ -85,8 +110,10 @@ async function loadInitialData() {
     console.warn('Live data unavailable:', err);
     allServices = [];
     servicesUnavailable = true;
+    incidentCountsByService = null;
     renderServicesList();
     renderPreflightDependencies();
+    renderIncidentBreakdown();
   }
 }
 
@@ -107,6 +134,33 @@ function updateMetrics(metrics) {
 
   const badge = document.getElementById('service-count-badge');
   if (badge) badge.textContent = servicesUnavailable ? 'Unavailable' : `${allServices.length} Tracking`;
+}
+
+function serviceDisplayName(slug) {
+  const service = allServices.find(s => s.slug === slug);
+  return service ? service.name : slug;
+}
+
+// Compact per-service breakdown under the Active Incidents stat: one
+// "Name · count" row per impacted service, busiest first. Renders
+// nothing when counts are unavailable or no service has an incident.
+function renderIncidentBreakdown() {
+  const container = document.getElementById('stat-incident-breakdown');
+  if (!container) return;
+  container.innerHTML = '';
+
+  if (!incidentCountsByService || incidentCountsByService.size === 0) return;
+
+  const entries = [...incidentCountsByService.entries()]
+    .map(([slug, count]) => ({ name: serviceDisplayName(slug), count }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+
+  entries.forEach(entry => {
+    const row = document.createElement('div');
+    row.className = 'incident-breakdown-row';
+    row.textContent = `${entry.name} · ${entry.count}`;
+    container.appendChild(row);
+  });
 }
 
 function renderServicesList() {
@@ -135,6 +189,13 @@ function renderServicesList() {
 
     const statusClass = service.current_status || 'operational';
 
+    const incidentCount = incidentCountsByService
+      ? (incidentCountsByService.get(service.slug) || 0)
+      : 0;
+    const incidentBadge = incidentCount > 0
+      ? `<span class="incident-badge">${incidentCount} incident${incidentCount === 1 ? '' : 's'}</span>`
+      : '';
+
     card.innerHTML = `
       <div class="service-top">
         <div class="service-name">
@@ -147,6 +208,7 @@ function renderServicesList() {
       </div>
       <div class="service-meta">
         <span>${service.latency_ms ? service.latency_ms.toFixed(1) + 'ms' : '—'}</span>
+        ${incidentBadge}
         <span class="etag-tag">${service.etag || 'W/"live"'}</span>
       </div>
     `;

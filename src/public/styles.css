@@ -308,6 +308,35 @@ header.app-header {
   font-family: var(--font-mono);
 }
 
+/* Per-service incident breakdown under the Active Incidents stat.
+   Populated only from the live incidents response; empty otherwise. */
+.incident-breakdown {
+  margin-top: 10px;
+}
+
+.incident-breakdown-row {
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+  color: var(--accent-amber);
+  padding: 3px 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* Per-service active-incident count badge on service cards, styled
+   after .status-badge.degraded. Rendered only when the count is > 0. */
+.incident-badge {
+  font-size: 0.7rem;
+  font-family: var(--font-mono);
+  padding: 2px 7px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  color: var(--accent-amber);
+  flex-shrink: 0;
+}
+
 /* Tab Panes */
 .tab-pane {
   display: none;
