@@ -29,7 +29,11 @@ import {
   getRecentRequestLog,
   getAdminOverview,
   getAgentClientById,
-  setAgentTier
+  setAgentTier,
+  recordBillingEvent,
+  upsertBillingLink,
+  tryApplyBilling,
+  downgradeBillingAgent
 } from './db/index.js';
 import { getPlan, listPlans, PLAN_TIERS } from './engine/plans.js';
 import { requestLogContext } from './engine/requestContext.js';
@@ -105,6 +109,159 @@ function parseJsonBody(req) {
     });
     req.on('error', reject);
   });
+}
+
+// Raw Body Parser (Stripe webhook signature verification needs the exact
+// bytes Stripe sent — a parsed/re-serialized body would not verify)
+function parseRawBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let length = 0;
+    req.on('data', chunk => {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+      length += buf.length;
+      if (length > 1e6) { // 1MB limit
+        req.destroy();
+        reject(new Error('Payload too large'));
+        return;
+      }
+      chunks.push(buf);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
+// --- Stripe billing (Payment Links + webhook activation) ---
+// Configuration is env-only: STRIPE_WEBHOOK_SECRET signs webhook events;
+// STRIPE_PAYMENT_LINK_PRO / STRIPE_PAYMENT_LINK_TEAM are the checkout
+// URLs. Without them, billing is disabled / plans stay operator-granted.
+
+function verifyStripeSignature(rawBody, signatureHeader, secret) {
+  if (!signatureHeader || typeof signatureHeader !== 'string') return false;
+  let timestamp = null;
+  const signatures = [];
+  for (const part of signatureHeader.split(',')) {
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    const key = part.substring(0, eq).trim();
+    const value = part.substring(eq + 1).trim();
+    if (key === 't') timestamp = value;
+    if (key === 'v1') signatures.push(value);
+  }
+  if (!timestamp || signatures.length === 0) return false;
+
+  const ts = parseInt(timestamp, 10);
+  if (!Number.isFinite(ts)) return false;
+  if (Math.abs(Math.floor(Date.now() / 1000) - ts) > 300) return false;
+
+  const signedPayload = Buffer.concat([Buffer.from(`${timestamp}.`, 'utf8'), rawBody]);
+  const expected = crypto.createHmac('sha256', secret).update(signedPayload).digest('hex');
+  const expectedBuf = Buffer.from(expected);
+  return signatures.some(sig => {
+    const sigBuf = Buffer.from(sig);
+    return sigBuf.length === expectedBuf.length && crypto.timingSafeEqual(sigBuf, expectedBuf);
+  });
+}
+
+/**
+ * The per-agent checkout URL for a plan: the configured Stripe Payment
+ * Link plus client_reference_id=<agent id>, so the webhook can map the
+ * payment back to this agent. Null when the plan is free or no link is
+ * configured for it.
+ */
+function checkoutUrlFor(plan, agentId) {
+  let link = null;
+  if (plan.tier === 'pro') link = process.env.STRIPE_PAYMENT_LINK_PRO || null;
+  if (plan.tier === 'team') link = process.env.STRIPE_PAYMENT_LINK_TEAM || null;
+  if (!link) return null;
+  const separator = link.includes('?') ? '&' : '?';
+  return `${link}${separator}client_reference_id=${encodeURIComponent(agentId)}`;
+}
+
+function billingLinksConfigured() {
+  return Boolean(process.env.STRIPE_PAYMENT_LINK_PRO && process.env.STRIPE_PAYMENT_LINK_TEAM);
+}
+
+async function handleStripeWebhook(req, res) {
+  const secret = process.env.STRIPE_WEBHOOK_SECRET;
+  if (!secret) {
+    return sendJson(res, 503, { error: 'billing_disabled' });
+  }
+
+  const rawBody = await parseRawBody(req);
+  if (!verifyStripeSignature(rawBody, req.headers['stripe-signature'], secret)) {
+    return sendJson(res, 400, { error: 'invalid_signature' });
+  }
+
+  let event;
+  try {
+    event = JSON.parse(rawBody.toString('utf8'));
+  } catch {
+    return sendJson(res, 400, { error: 'invalid_payload' });
+  }
+
+  // Dedupe: Stripe redelivers on any non-2xx and occasionally at-least-once
+  // duplicates a delivery; a recorded event id is acknowledged, not
+  // reprocessed.
+  if (event.id && !recordBillingEvent(event.id)) {
+    return sendJson(res, 200, { received: true, duplicate: true });
+  }
+
+  const object = (event.data && event.data.object) || {};
+
+  switch (event.type) {
+    case 'checkout.session.completed': {
+      const subscriptionId = typeof object.subscription === 'string' ? object.subscription : null;
+      if (subscriptionId) {
+        upsertBillingLink({
+          subscription_id: subscriptionId,
+          customer_id: typeof object.customer === 'string' ? object.customer : null,
+          agent_id: typeof object.client_reference_id === 'string' ? object.client_reference_id : null
+          // tier preserved from any subscription event already stored
+        });
+        tryApplyBilling(subscriptionId);
+      }
+      break;
+    }
+
+    case 'customer.subscription.created':
+    case 'customer.subscription.updated': {
+      const subscriptionId = typeof object.id === 'string' ? object.id : null;
+      if (subscriptionId) {
+        const metaTier = object.metadata && typeof object.metadata.tier === 'string'
+          ? object.metadata.tier
+          : null;
+        upsertBillingLink({
+          subscription_id: subscriptionId,
+          customer_id: typeof object.customer === 'string' ? object.customer : null,
+          tier: metaTier === 'pro' || metaTier === 'team' ? metaTier : null
+        });
+        if (object.status === 'active' || object.status === 'trialing') {
+          tryApplyBilling(subscriptionId);
+        } else if (object.status === 'canceled' || object.status === 'unpaid' || object.status === 'incomplete_expired') {
+          downgradeBillingAgent(subscriptionId);
+        }
+      }
+      break;
+    }
+
+    case 'customer.subscription.deleted': {
+      const subscriptionId = typeof object.id === 'string' ? object.id : null;
+      if (subscriptionId) {
+        downgradeBillingAgent(subscriptionId);
+      }
+      break;
+    }
+
+    case 'invoice.payment_failed':
+    default:
+      // Acknowledge only: Stripe retries the payment and the follow-up
+      // subscription events drive any downgrade. Unknown types likewise.
+      break;
+  }
+
+  return sendJson(res, 200, { received: true });
 }
 
 // Extract Authenticated Agent & Check Rate Limit
@@ -213,7 +370,7 @@ export async function handleRequest(req, res) {
   } catch { /* keep raw path */ }
 
   const logCtx = {
-    shouldLog: pathname.startsWith('/v1/') && !pathname.startsWith('/v1/admin'),
+    shouldLog: pathname.startsWith('/v1/') && !pathname.startsWith('/v1/admin') && !pathname.startsWith('/v1/billing'),
     logged: false,
     agentId: null,
     agentName: null,
@@ -314,6 +471,15 @@ async function handleRequestInner(req, res, logCtx) {
       return sendJson(res, mcpResponse.status, mcpResponse.body, mcpResponse.headers || {});
     }
 
+    // 2b. Stripe Billing Webhook: POST /v1/billing/webhook
+    // Public (authenticated by Stripe's signature, not an API key), never
+    // quota-counted, and excluded from the request log like the admin
+    // paths (see handleRequest). Needs the raw body — handled before any
+    // JSON body parsing happens.
+    if (pathname === '/v1/billing/webhook' && method === 'POST') {
+      return handleStripeWebhook(req, res);
+    }
+
     // 3. Bot Onboarding: POST /v1/agents/register
     if (pathname === '/v1/agents/register' && method === 'POST') {
       const body = await parseJsonBody(req);
@@ -353,14 +519,20 @@ async function handleRequestInner(req, res, logCtx) {
         });
       }
       const state = getAgentQuotaState(agent.id);
+      const plans = listPlans().map(plan => ({
+        ...plan,
+        checkout_url: checkoutUrlFor(plan, agent.id)
+      }));
       return sendJson(res, 200, {
         tier: agent.tier,
         daily_quota: state ? state.limit : agent.daily_quota,
         requests_today: state ? state.used : 0,
         quota_remaining: state ? state.remaining : agent.daily_quota,
-        plans: listPlans(),
+        plans,
         upgrade: {
-          how: 'Paid plans are activated by the operator after purchase — see website',
+          how: billingLinksConfigured()
+            ? 'Open your plan\'s checkout_url and complete the Stripe checkout — keep the client_reference_id in the URL so your plan activates automatically on payment. Cancellation downgrades automatically.'
+            : 'Paid plans are activated by the operator after purchase — see website',
           url: 'https://agentpulse-43di.onrender.com'
         }
       }, rateLimitHeadersFor(agent));

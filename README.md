@@ -143,7 +143,25 @@ Agents that cache politely get rewarded:
 | Pro | `pro` | 10,000 counted calls/day | $29/month |
 | Team | `team` | 50,000 counted calls/day | $99/month |
 
-Registration always lands on Free. An agent can read its current tier, usage, and the full catalog at `GET /v1/agents/me/plan` (auth required; the read itself is not counted). **Honest activation note:** there is no self-serve checkout yet — no payment provider is connected. Paid plans are activated by the operator after purchase: the owner grants a plan with `PATCH /v1/admin/agents/{id}` (admin token required), which sets the agent's tier and daily quota from the catalog in one step.
+Registration always lands on Free. An agent can read its current tier, usage, and the full catalog at `GET /v1/agents/me/plan` (auth required; the read itself is not counted). Paid plans activate one of two ways: automatically, when Stripe billing is configured (next section), or by the operator — the owner grants a plan with `PATCH /v1/admin/agents/{id}` (admin token required), which sets the agent's tier and daily quota from the catalog in one step.
+
+### Billing — Stripe Payment Links (optional)
+
+Checkout is via **Stripe Payment Links** — one link per paid plan, created in the Stripe dashboard with a recurring price and `subscription_data` metadata `tier=pro` / `tier=team`. Configuration is env-only (never hardcoded):
+
+| Env var | Purpose |
+| :--- | :--- |
+| `STRIPE_PAYMENT_LINK_PRO` | Checkout URL for the Pro payment link. |
+| `STRIPE_PAYMENT_LINK_TEAM` | Checkout URL for the Team payment link. |
+| `STRIPE_WEBHOOK_SECRET` | Signing secret (`whsec_...`) for the webhook endpoint below. |
+
+How it works:
+
+- `GET /v1/agents/me/plan` adds a per-plan `checkout_url`: the plan's payment link plus `?client_reference_id=<agent id>`, so the payment can be mapped back to the agent. (Free's `checkout_url` is always `null`; without the env vars, every `checkout_url` is `null` and the upgrade text keeps the operator wording.)
+- Stripe sends events to **`POST /v1/billing/webhook`**. The endpoint verifies the `Stripe-Signature` header (HMAC-SHA256 over `<timestamp>.<raw body>`, 5-minute tolerance) against `STRIPE_WEBHOOK_SECRET` — when the secret is unset it answers `503 { "error": "billing_disabled" }`. It is not agent-authenticated, never quota-counted, and excluded from the request log. Event ids are recorded in `billing_events`, so redeliveries are acknowledged as duplicates without reprocessing.
+- **Activation:** `checkout.session.completed` carries the `client_reference_id` (agent id) and the subscription id; `customer.subscription.created` / `updated` carries the tier in the subscription's metadata. The two halves are stored in `billing_links` keyed by subscription id, so **either arrival order works**: once both halves are present and the subscription is `active`/`trialing`, the agent's tier and daily quota are set from the plan catalog and its Stripe customer/subscription ids are stored on the agent row.
+- **Deactivation:** `customer.subscription.deleted` — or an `updated` event with status `canceled`, `unpaid`, or `incomplete_expired` — downgrades the linked agent back to `free_verified` (100/day) and clears its stored subscription id. `invoice.payment_failed` is acknowledged only; Stripe's retries and the follow-up subscription events drive the outcome.
+- **Without the env vars**, none of this is active: plans remain operator-granted via the admin API/page, exactly as before.
 
 ### 7. Webhooks — push alerts
 
@@ -165,7 +183,8 @@ Subscribe a URL once; AgentPulse POSTs signed events as they happen: `incident.c
 | Changes | `GET /v1/changes?since=&service=&scope=mine` | Breaking-change delta feed; every change carries `playbook_url`. |
 | Playbook | `GET /v1/changes/{id}/playbook` | Full migration playbook for one change (public, cacheable). |
 | Manifest | `GET` / `PUT /v1/agents/me/dependencies` | Read / replace-all write of your dependency manifest (auth required). |
-| Plan | `GET /v1/agents/me/plan` | Your tier, quota usage, and the plan catalog (auth required; not counted). |
+| Plan | `GET /v1/agents/me/plan` | Your tier, quota usage, and the plan catalog with per-plan `checkout_url` (auth required; not counted). |
+| Billing | `POST /v1/billing/webhook` | Stripe event receiver (signature-authenticated; activates/downgrades plans). |
 | Webhooks | `POST` / `GET /v1/agents/me/webhooks`, `DELETE /v1/agents/me/webhooks/{id}`, `GET /v1/agents/me/webhooks/{id}/deliveries` | Manage subscriptions and inspect delivery attempts (auth required). |
 | Telemetry | `POST /v1/telemetry/report` | Report an observed outage signal (auth required). |
 | Probes | `POST /v1/synthetic/probe` | Trigger one synthetic health probe (auth required). |
@@ -282,6 +301,8 @@ Access is controlled by the **`ADMIN_TOKEN`** environment variable: send it as `
 | `WEBHOOK_RETRY_DELAYS_MS` | `1000,5000` | Webhook backoff delays (attempts = delays + 1). |
 | `WEBHOOK_TIMEOUT_MS` | `5000` | Per-attempt webhook delivery timeout. |
 | `ADMIN_TOKEN` | *(unset)* | Bearer token for the owner-visibility endpoints (`/v1/admin/*`) and the `/admin` page. Unset = admin API disabled (503). |
+| `STRIPE_WEBHOOK_SECRET` | *(unset)* | Stripe webhook signing secret for `POST /v1/billing/webhook`. Unset = billing webhook disabled (503). |
+| `STRIPE_PAYMENT_LINK_PRO` / `STRIPE_PAYMENT_LINK_TEAM` | *(unset)* | Stripe Payment Link checkout URLs served as per-agent `checkout_url`s by the plan endpoint. Unset = plans stay operator-granted. |
 
 ### Tests
 
@@ -297,12 +318,14 @@ Defined in `src/db/schema.sql` (SQLite, WAL mode):
 - **`incidents`** — id (PK), service, severity, affected scope, agent summary + hint, started/resolved timestamps.
 - **`breaking_changes`** — id (PK), service, change type, diff summary, migration hint, detected_at.
 - **`spec_snapshots`** — service, spec URL, SHA-256 hash, raw spec; latest row per service/URL is the diff baseline.
-- **`agent_clients`** — id (PK), API-key hash, agent name, operator URL, tier, daily quota, Good Citizen score.
+- **`agent_clients`** — id (PK), API-key hash, agent name, operator URL, tier, daily quota, Good Citizen score, Stripe customer/subscription ids (set by billing activation).
 - **`agent_dependencies`** — agent × service manifest rows (optional package/version pins), unique per pair.
 - **`agent_webhooks`** — agent, URL, event/service filters, signing secret, active flag.
 - **`webhook_deliveries`** — per-attempt delivery log: exact signed payload, status, attempts, last HTTP status/error.
 - **`synthetic_probes`** / **`outage_signals`** — probe results and crowdsourced telemetry.
 - **`request_log`** — one row per API/MCP call for owner visibility: agent (null when anonymous), method, path, status, quota-counted flag, timestamp; pruned to 7 days.
+- **`billing_links`** — subscription id (PK) → Stripe customer id, tier, agent id: the two event halves of a paid plan, joined by the webhook.
+- **`billing_events`** — processed Stripe event ids (PK) + received-at timestamp, for webhook dedupe.
 
 ## Project layout
 

@@ -6,9 +6,13 @@
  * tier gets the same API, the same Good Citizen rules (304s never count),
  * and the same UTC-midnight reset.
  *
- * There is NO self-serve checkout yet (no payment provider is connected).
- * Paid plans are activated by the operator after purchase — see the
- * upgrade instructions served by GET /v1/agents/me/plan — and granted via
+ * Self-serve checkout exists when the operator configures Stripe Payment
+ * Links (STRIPE_PAYMENT_LINK_PRO / STRIPE_PAYMENT_LINK_TEAM): the plan
+ * endpoint then serves per-agent checkout URLs and the Stripe webhook
+ * (POST /v1/billing/webhook) activates/downgrades plans automatically.
+ * Without those env vars there is no checkout and paid plans are
+ * activated by the operator after purchase — see the upgrade instructions
+ * served by GET /v1/agents/me/plan — or granted directly via
  * PATCH /v1/admin/agents/:id, which reads tier + quota from this catalog.
  */
 export const PLANS = {

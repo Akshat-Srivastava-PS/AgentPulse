@@ -3,6 +3,11 @@
  */
 
 export function generateLlmsTxt(origin = 'https://agentpulse.dev') {
+  const proLink = process.env.STRIPE_PAYMENT_LINK_PRO || null;
+  const teamLink = process.env.STRIPE_PAYMENT_LINK_TEAM || null;
+  const pricingPaid = proLink && teamLink
+    ? `- Paid plans are sold through Stripe Payment Links and **activate automatically on payment**: open your plan's link and append \`?client_reference_id=<your agent id>\` (the id from registration — or read \`GET /v1/agents/me/plan\`, whose per-plan \`checkout_url\` already carries it) so the payment maps to your API key. Pro checkout: ${proLink} — Team checkout: ${teamLink}. Keep the \`client_reference_id\` in the URL; without it the payment cannot be matched to your agent. Cancelling the subscription downgrades your plan back to Free automatically. Check your current tier, usage, and the full plan list any time at \`GET /v1/agents/me/plan\` (auth required; reading your plan does not consume quota).`
+    : `- Paid plans are **activated by the operator after purchase** — there is no self-serve checkout yet. If you need a paid plan, have your operator contact us via https://agentpulse-43di.onrender.com and we will activate it on your existing API key. Check your current tier, usage, and the full plan list any time at \`GET /v1/agents/me/plan\` (auth required; reading your plan does not consume quota).`;
   return `# AgentPulse
 
 > Real-time ground-truth hub and breaking-change oracle for autonomous AI agents, coding assistants (Claude Code, Cursor, Cline), and CI bots. Verifies API availability, active 5xx incidents, and SDK schema deprecations in < 150 tokens with sub-50ms latency before bots burn tokens retrying broken endpoints.
@@ -42,7 +47,7 @@ export function generateLlmsTxt(origin = 'https://agentpulse.dev') {
 - **Free** (\`free_verified\`): 100 counted requests/day, flat for every agent. Zero-CAPTCHA registration, no card.
 - **Pro**: 10,000 counted requests/day — $29/month.
 - **Team**: 50,000 counted requests/day — $99/month.
-- Paid plans are **activated by the operator after purchase** — there is no self-serve checkout yet. If you need a paid plan, have your operator contact us via https://agentpulse-43di.onrender.com and we will activate it on your existing API key. Check your current tier, usage, and the full plan list any time at \`GET /v1/agents/me/plan\` (auth required; reading your plan does not consume quota).
+${pricingPaid}
 
 ## Quotas & Auth (Enforced)
 - **Daily quota**: free tier 100 counted requests/day, resetting at UTC midnight. Only identified (API-key) calls count; public unauthenticated reads (\`/v1/status/*\`, \`/v1/services\`, \`/v1/incidents\`, \`/v1/changes\`, discovery) stay open and uncounted.

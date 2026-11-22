@@ -192,10 +192,21 @@ export function generateOpenApiSchema(origin = 'https://agentpulse.dev') {
           }
         }
       },
+      '/v1/billing/webhook': {
+        post: {
+          summary: 'Stripe Billing Webhook',
+          description: 'Receives Stripe events for Payment Link checkouts. Authenticated by the `Stripe-Signature` header (HMAC-SHA256 over `<timestamp>.<raw body>`, keyed with STRIPE_WEBHOOK_SECRET) — NOT by an AgentPulse API key, and never quota-counted. `checkout.session.completed` (client_reference_id = agent id) joined with `customer.subscription.created/updated` (metadata.tier) activates the paid plan on the agent; `customer.subscription.deleted` (or a canceled/unpaid/expired status) downgrades it back to free_verified. Events are deduped by event id. Returns 503 when billing is not configured.',
+          responses: {
+            '200': { description: 'Event received (also returned for duplicates, with `duplicate: true`)' },
+            '400': { description: 'Missing/invalid Stripe signature or unparseable payload' },
+            '503': { description: 'Billing disabled (STRIPE_WEBHOOK_SECRET not configured)' }
+          }
+        }
+      },
       '/v1/agents/me/plan': {
         get: {
           summary: 'Get My Plan & Pricing Catalog',
-          description: 'Returns the authenticated agent\'s current tier, daily quota, requests used today and remaining, plus the full plan catalog (free_verified 100/day free; pro 10,000/day $29/mo; team 50,000/day $99/mo). Paid plans are activated by the operator after purchase — there is no self-serve checkout; the `upgrade` field explains how. Reading your plan does not consume quota.',
+          description: 'Returns the authenticated agent\'s current tier, daily quota, requests used today and remaining, plus the full plan catalog (free_verified 100/day free; pro 10,000/day $29/mo; team 50,000/day $99/mo). When Stripe Payment Links are configured, each paid plan entry carries a per-agent `checkout_url` (the plan\'s payment link plus `client_reference_id=<agent id>`) and paying activates the plan automatically via POST /v1/billing/webhook; otherwise `checkout_url` is null and paid plans are activated by the operator after purchase. Reading your plan does not consume quota.',
           security: [{ bearerAuth: [] }],
           responses: {
             '200': {
@@ -218,7 +229,8 @@ export function generateOpenApiSchema(origin = 'https://agentpulse.dev') {
                             tier: { type: 'string', example: 'pro' },
                             name: { type: 'string', example: 'Pro' },
                             daily_quota: { type: 'integer', example: 10000 },
-                            price_usd_month: { type: 'integer', example: 29 }
+                            price_usd_month: { type: 'integer', example: 29 },
+                            checkout_url: { type: ['string', 'null'], example: 'https://buy.stripe.com/...?client_reference_id=agent_1a2b3c4d', description: 'Per-agent Stripe Payment Link checkout URL; null for the free plan and when payment links are not configured.' }
                           }
                         }
                       },

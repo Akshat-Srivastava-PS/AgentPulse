@@ -176,7 +176,22 @@ function initSchema(db) {
 
     CREATE INDEX IF NOT EXISTS idx_request_log_created ON request_log(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_request_log_agent ON request_log(agent_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS billing_links (
+      subscription_id TEXT PRIMARY KEY,
+      customer_id TEXT,
+      tier TEXT,
+      agent_id TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS billing_events (
+      event_id TEXT PRIMARY KEY,
+      received_at TEXT NOT NULL
+    );
   `);
+
+  addColumnIfMissing(db, 'agent_clients', 'stripe_customer_id', 'TEXT');
+  addColumnIfMissing(db, 'agent_clients', 'stripe_subscription_id', 'TEXT');
 
   // Seed the services catalog on first boot. The catalog is configuration
   // (the registry of tracked vendors) — no incidents, breaking changes, or
@@ -196,6 +211,18 @@ function initSchema(db) {
       const after = db.prepare('SELECT count(*) as count FROM services').get();
       if (after.count === 0) throw err;
     }
+  }
+}
+
+/**
+ * Add a column to an existing table when it is not already there, so
+ * databases created by earlier versions gain new columns on boot without
+ * a destructive migration.
+ */
+function addColumnIfMissing(db, table, column, definition) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (!columns.some(c => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
 }
 
@@ -1223,6 +1250,109 @@ export function setAgentTier(agentId, tier) {
     .run(plan.tier, plan.daily_quota, agentId);
 
   return buildAdminAgentRow(getAgentClientById(agentId));
+}
+
+// --- Stripe billing links & events ---
+// Buyers pay through Stripe Payment Links. Two kinds of Stripe events
+// carry the two halves of the mapping (checkout.session.completed carries
+// client_reference_id = the agent id; subscription events carry the tier
+// in metadata), and they can arrive in either order — so each half is
+// stored in billing_links keyed by subscription id, and tryApplyBilling
+// joins them whenever both halves are present.
+
+/**
+ * Record a Stripe event id for dedupe. Returns true when the event is
+ * new, false when it was already recorded (Stripe redelivery).
+ */
+export function recordBillingEvent(eventId) {
+  const db = getDb();
+  const info = db.prepare('INSERT OR IGNORE INTO billing_events (event_id, received_at) VALUES (?, ?)')
+    .run(eventId, new Date().toISOString());
+  return info.changes > 0;
+}
+
+export function getBillingLink(subscriptionId) {
+  const db = getDb();
+  return db.prepare('SELECT * FROM billing_links WHERE subscription_id = ?').get(subscriptionId) || null;
+}
+
+/**
+ * Merge the known halves of a subscription mapping. Fields left
+ * null/undefined keep their stored values, so the checkout and
+ * subscription events commute in either arrival order.
+ */
+export function upsertBillingLink({ subscription_id, customer_id = null, tier = null, agent_id = null }) {
+  const db = getDb();
+  const existing = getBillingLink(subscription_id);
+  const merged = {
+    subscription_id,
+    customer_id: customer_id ?? (existing ? existing.customer_id : null),
+    tier: tier ?? (existing ? existing.tier : null),
+    agent_id: agent_id ?? (existing ? existing.agent_id : null)
+  };
+  db.prepare(`
+    INSERT INTO billing_links (subscription_id, customer_id, tier, agent_id)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(subscription_id) DO UPDATE SET
+      customer_id = excluded.customer_id,
+      tier = excluded.tier,
+      agent_id = excluded.agent_id
+  `).run(merged.subscription_id, merged.customer_id, merged.tier, merged.agent_id);
+  return getBillingLink(subscription_id);
+}
+
+/**
+ * When the billing link for a subscription has both an agent and a paid
+ * tier, apply that plan to the agent (tier + quota from the catalog, plus
+ * the Stripe customer/subscription ids). No-op otherwise. Returns the
+ * updated agent row, or null when nothing was applied.
+ */
+export function tryApplyBilling(subscriptionId) {
+  const link = getBillingLink(subscriptionId);
+  if (!link || !link.agent_id || !link.tier) return null;
+  const plan = getPlan(link.tier);
+  if (!plan || plan.tier === 'free_verified') return null;
+  const db = getDb();
+  const agent = getAgentClientById(link.agent_id);
+  if (!agent) return null;
+
+  db.prepare(`
+    UPDATE agent_clients
+    SET tier = ?, daily_quota = ?, stripe_customer_id = ?, stripe_subscription_id = ?
+    WHERE id = ?
+  `).run(plan.tier, plan.daily_quota, link.customer_id, subscriptionId, link.agent_id);
+
+  return getAgentClientById(link.agent_id);
+}
+
+/**
+ * Downgrade the agent linked to a subscription back to the free plan and
+ * clear its stored subscription id. The agent is found through
+ * billing_links, falling back to agent_clients.stripe_subscription_id.
+ * The billing link row (when present) is marked free_verified. Returns
+ * the downgraded agent row, or null when no agent is linked.
+ */
+export function downgradeBillingAgent(subscriptionId) {
+  const db = getDb();
+  const link = getBillingLink(subscriptionId);
+  let agent = link && link.agent_id ? getAgentClientById(link.agent_id) : null;
+  if (!agent) {
+    agent = db.prepare('SELECT * FROM agent_clients WHERE stripe_subscription_id = ?').get(subscriptionId) || null;
+  }
+  if (link) {
+    db.prepare('UPDATE billing_links SET tier = ? WHERE subscription_id = ?')
+      .run(PLANS.free_verified.tier, subscriptionId);
+  }
+  if (!agent) return null;
+
+  const freePlan = PLANS.free_verified;
+  db.prepare(`
+    UPDATE agent_clients
+    SET tier = ?, daily_quota = ?, stripe_subscription_id = NULL
+    WHERE id = ?
+  `).run(freePlan.tier, freePlan.daily_quota, agent.id);
+
+  return getAgentClientById(agent.id);
 }
 
 export function getSystemMetrics() {
