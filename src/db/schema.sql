@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS breaking_changes (
     service_slug VARCHAR(64) NOT NULL REFERENCES services(slug) ON DELETE CASCADE,
     version_or_date VARCHAR(64) NOT NULL, -- e.g., 2026-11-01, v4.0.0
     change_type VARCHAR(64) NOT NULL, -- deprecation, schema_diff, rate_limit_change
+    kind VARCHAR(64), -- structured diff kind (e.g. removed_response_property); NULL on legacy rows
+    location TEXT, -- structured diff location (e.g. 'GET /v1/charges response property customer.email'); NULL on legacy rows
     diff_summary TEXT NOT NULL,
     migration_hint TEXT NOT NULL,
     detected_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -123,6 +125,7 @@ CREATE TABLE IF NOT EXISTS agent_dependencies (
     service_slug VARCHAR(64) NOT NULL REFERENCES services(slug) ON DELETE CASCADE,
     package_name VARCHAR(255), -- e.g. npm/pip package name ("stripe", "openai")
     package_version VARCHAR(64), -- e.g. "14.5.0"
+    endpoints TEXT, -- JSON array of declared endpoints ("GET /v1/charges" or "/v1/charges"); NULL = service-level relevance
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (agent_id, service_slug)

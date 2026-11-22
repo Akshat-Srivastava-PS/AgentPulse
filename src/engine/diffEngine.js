@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { getService, getActiveIncidents, getBreakingChanges, getAllServices, getAgentDependencies } from '../db/index.js';
 import { formatCompactStatusPayload, estimateTokenCount } from './normalizer.js';
+import { changeMatchesEndpoints } from './endpoints.js';
 
 export function computeIncidentFingerprint(serviceSlug, scope, summary) {
   const norm = `${serviceSlug}:${(scope || '').trim().toLowerCase()}:${(summary || '').trim().toLowerCase()}`;
@@ -20,13 +21,17 @@ function truncate(text, max = 90) {
 /**
  * Compact affected verdict for one service: affected iff it has any active
  * incident OR any breaking change detected within the impact window.
+ * When `endpoints` are declared for the dependency, only breaking changes
+ * on matching operations count (incidents are service-level and always
+ * count); with no endpoints the verdict is purely service-level, as before.
  * Returns matching ids plus a one-line reason (kept short for token budget).
  */
-export function evaluateServiceImpact(serviceSlug) {
+export function evaluateServiceImpact(serviceSlug, endpoints = null) {
   const slug = String(serviceSlug || '').trim().toLowerCase();
   const incidents = getActiveIncidents(slug);
   const windowStart = new Date(Date.now() - BREAKING_CHANGE_IMPACT_WINDOW_DAYS * 24 * 3600 * 1000).toISOString();
-  const changes = getBreakingChanges(slug, windowStart);
+  const changes = getBreakingChanges(slug, windowStart)
+    .filter(c => changeMatchesEndpoints(c, endpoints));
 
   const incident_ids = incidents.map(i => i.id);
   const change_ids = changes.map(c => c.id);
@@ -49,7 +54,7 @@ export function evaluateManifestImpact(agentId) {
   const manifest = getAgentDependencies(agentId);
   const dependencies = manifest.map(dep => ({
     ...dep,
-    impact: evaluateServiceImpact(dep.service)
+    impact: evaluateServiceImpact(dep.service, dep.endpoints)
   }));
   const affectedDeps = dependencies.filter(d => d.impact.affected);
 
@@ -150,12 +155,12 @@ export function evaluatePreflight(dependencies = [], agentId = null) {
   if (agentId) {
     const manifest = getAgentDependencies(agentId);
     if (manifest.length > 0) {
-      const manifestSlugs = new Set(manifest.map(d => d.service));
+      const manifestBySlug = new Map(manifest.map(d => [d.service, d]));
       let affectedCount = 0;
       for (const slug of normalizedSlugs) {
         const entry = serviceResults[slug];
-        if (entry && entry.tracked && manifestSlugs.has(slug)) {
-          entry.impact = evaluateServiceImpact(slug);
+        if (entry && entry.tracked && manifestBySlug.has(slug)) {
+          entry.impact = evaluateServiceImpact(slug, manifestBySlug.get(slug).endpoints);
           if (entry.impact.affected) affectedCount++;
         }
       }

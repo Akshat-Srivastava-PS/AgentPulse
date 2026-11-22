@@ -491,6 +491,8 @@ export function processFetchedSpec(serviceSlug, specUrl, rawText) {
         service_slug: serviceSlug,
         version_or_date: String(versionOrDate),
         change_type: 'schema_diff',
+        kind: change.kind,
+        location: change.location,
         diff_summary: `${change.summary} (source: ${specUrl})`,
         migration_hint: change.migration_hint
       });

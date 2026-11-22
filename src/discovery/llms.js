@@ -20,14 +20,14 @@ export function generateLlmsTxt(origin = 'https://agentpulse.dev') {
 ## Essential Preflight & Status Tools
 - [Batch Preflight Check](${origin}/v1/preflight): POST dependency list (e.g. ["stripe", "supabase", "resend"]) to obtain immediate pass/degraded/block verdict.
 - [Service Status Query](${origin}/v1/status/stripe): GET compact health status, active incidents, affected scope, and prescriptive agent_hint (< 150 tokens).
-- [Delta Feed of Breaking Changes](${origin}/v1/changes): GET recent SDK deprecations and schema mutations since timestamp checkpoint. Add \`?scope=mine\` (auth required) to restrict the feed to your manifest services. Every change carries a \`playbook_url\`.
+- [Delta Feed of Breaking Changes](${origin}/v1/changes): GET recent SDK deprecations and schema mutations since timestamp checkpoint. Add \`?scope=mine\` (auth required) to restrict the feed to your manifest services — and, for entries that declare \`endpoints\`, to changes on those operations. Every change carries a \`playbook_url\`.
 - [Migration Playbook](${origin}/v1/changes/{id}/playbook): GET a structured migration playbook for one breaking change: \`{ change_id, service, kind, summary, steps: [{ action, detail, code_example? }], effort_estimate, risk_notes }\`, generated from the change's own fields (operation, path, parameter/property names, types) — generic templates, no invented vendor facts.
 - [JavaScript SDK](https://www.npmjs.com/package/agentpulse-sdk): \`npm install agentpulse-sdk\` — zero-dependency client (global fetch only) wrapping this API with ETag caching and typed errors, for agents that prefer plain functions over MCP. Source: \`sdk/\` in the AgentPulse repo.
 - [All Monitored Services](${origin}/v1/services): Full catalog of tracked cloud providers, APIs, and registries.
 - [Live Incident Feed](${origin}/v1/incidents): Active incidents with severity ratings and mitigation hints.
 
 ## My Dependency Manifest & Affected Answers (Auth Required)
-- [Dependency Manifest](${origin}/v1/agents/me/dependencies): \`PUT\` replaces your stored manifest: \`{"dependencies": [{"service": "stripe", "package": "stripe", "version": "14.5.0"}]}\` (package/version optional; unknown slugs rejected with 400). \`GET\` returns it. Once set, preflight adds a compact \`impact\` verdict ({ affected, incident_ids, change_ids, reason }) per manifest service — affected means an active incident or a breaking change from the last 90 days touches your stack.
+- [Dependency Manifest](${origin}/v1/agents/me/dependencies): \`PUT\` replaces your stored manifest: \`{"dependencies": [{"service": "stripe", "package": "stripe", "version": "14.5.0"}]}\` (package/version optional; unknown slugs rejected with 400). \`GET\` returns it. An entry may also declare \`endpoints\` (e.g. \`["POST /v1/charges", "/v1/customers"]\`) — the operations you actually call on that service; when declared, only breaking changes on matching operations count for that service in impact verdicts, the \`scope=mine\` feed, and \`change.detected\` webhooks (entries without endpoints stay service-level). Once set, preflight adds a compact \`impact\` verdict ({ affected, incident_ids, change_ids, reason }) per manifest service — affected means an active incident or a breaking change from the last 90 days touches your stack.
 
 ## Webhook Alerts (Auth Required)
 - [Webhooks](${origin}/v1/agents/me/webhooks): \`POST\` subscribes a URL to \`incident.created\`, \`incident.resolved\`, and \`change.detected\` events (optionally filtered by \`services\` slugs — set it to your manifest services to hear only about your stack; omitted = all services). The create response shows the signing \`secret\` ONCE. Every delivery is a POST of \`{"id", "type", "created_at", "data"}\` with headers \`X-AgentPulse-Event\`, \`X-AgentPulse-Delivery\`, and \`X-AgentPulse-Signature: sha256=<HMAC-SHA256 hex of the raw body, keyed with your secret>\` — verify it before trusting a payload. \`GET\` lists your webhooks (no secrets), \`DELETE /v1/agents/me/webhooks/{id}\` removes one, \`GET /v1/agents/me/webhooks/{id}/deliveries\` shows the last 20 delivery attempts. URLs must be https (http allowed only for localhost). Deliveries retry up to 3 attempts with backoff.
@@ -221,12 +221,14 @@ curl -X PUT "${origin}/v1/agents/me/dependencies" \\
 \`\`\`
 PUT is replace-all; slugs are validated against the monitored catalog (unknown slug → 400 naming the slug). \`GET\` on the same path returns the stored manifest.
 
+An entry may declare the endpoints you actually call on the service — \`"endpoints": ["POST /v1/charges", "/v1/customers"]\` (\`"METHOD /path"\` or \`"/path"\`; a declared path also covers its subpaths). When endpoints are declared, only breaking changes on matching operations count toward that dependency; without them, relevance stays at service level. Changes recorded before structured locations existed always count.
+
 With a manifest in place:
 - \`POST /v1/preflight\` (authenticated) adds \`impact: { affected, incident_ids, change_ids, reason }\` to each requested service that is in your manifest, plus a top-level \`affected_count\`.
-- \`GET /v1/changes?scope=mine\` filters the delta feed to your services.
+- \`GET /v1/changes?scope=mine\` filters the delta feed to your services (and to your declared endpoints, where declared).
 - The MCP tool \`get_my_impact\` returns the verdict for your whole manifest in one call.
 
-A dependency is **affected** when its service has any active incident, or any breaking change detected in the last 90 days.
+A dependency is **affected** when its service has any active incident, or any breaking change detected in the last 90 days (on a declared endpoint, when endpoints are declared).
 
 ### Webhook Alerts (\`POST/GET/DELETE /v1/agents/me/webhooks\`)
 Stop polling: subscribe a URL and get pushed alerts for incidents and breaking changes.

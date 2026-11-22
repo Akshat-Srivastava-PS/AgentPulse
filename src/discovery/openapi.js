@@ -116,7 +116,7 @@ export function generateOpenApiSchema(origin = 'https://agentpulse.dev') {
       '/v1/agents/me/dependencies': {
         get: {
           summary: 'Get My Dependency Manifest',
-          description: 'Returns the authenticated agent\'s stored dependency manifest (services + optional package/version pins) used for "affected code" answers.',
+          description: 'Returns the authenticated agent\'s stored dependency manifest (services + optional package/version pins + optional declared endpoints) used for "affected code" answers.',
           security: [{ bearerAuth: [] }],
           responses: {
             '200': {
@@ -137,6 +137,7 @@ export function generateOpenApiSchema(origin = 'https://agentpulse.dev') {
                             service: { type: 'string', example: 'stripe' },
                             package: { type: ['string', 'null'], example: 'stripe' },
                             version: { type: ['string', 'null'], example: '14.5.0' },
+                            endpoints: { type: ['array', 'null'], items: { type: 'string' }, example: ['POST /v1/charges', '/v1/customers'], description: 'Endpoints the agent actually calls on this service, normalized to "METHOD /path" or "/path"; null = no endpoints declared (service-level relevance).' },
                             created_at: { type: 'string', format: 'date-time' },
                             updated_at: { type: 'string', format: 'date-time' }
                           }
@@ -153,7 +154,7 @@ export function generateOpenApiSchema(origin = 'https://agentpulse.dev') {
         },
         put: {
           summary: 'Replace My Dependency Manifest',
-          description: 'Replace-all update of the authenticated agent\'s dependency manifest. Service slugs are validated against the monitored catalog; an unknown slug rejects the whole update with 400. An empty array clears the manifest.',
+          description: 'Replace-all update of the authenticated agent\'s dependency manifest. Service slugs are validated against the monitored catalog; an unknown slug rejects the whole update with 400. An empty array clears the manifest. Each entry may declare `endpoints` — the operations the agent actually calls, as "METHOD /path" or "/path" strings (a declared path also covers its subpaths). When endpoints are declared, impact verdicts, the scope=mine feed, and change.detected webhooks only count breaking changes on matching operations for that service; entries without endpoints keep service-level relevance. Changes recorded before structured locations existed (location null) always count.',
           security: [{ bearerAuth: [] }],
           requestBody: {
             required: true,
@@ -169,12 +170,13 @@ export function generateOpenApiSchema(origin = 'https://agentpulse.dev') {
                         properties: {
                           service: { type: 'string', example: 'stripe' },
                           package: { type: 'string', example: 'stripe' },
-                          version: { type: 'string', example: '14.5.0' }
+                          version: { type: 'string', example: '14.5.0' },
+                          endpoints: { type: 'array', items: { type: 'string' }, example: ['POST /v1/charges', '/v1/customers'], description: 'Optional. Operations the agent calls on this service: "METHOD /path" or "/path" (covers subpaths).' }
                         },
                         required: ['service']
                       },
                       example: [
-                        { service: 'stripe', package: 'stripe', version: '14.5.0' },
+                        { service: 'stripe', package: 'stripe', version: '14.5.0', endpoints: ['POST /v1/charges'] },
                         { service: 'openai' }
                       ]
                     }
@@ -529,7 +531,7 @@ export function generateOpenApiSchema(origin = 'https://agentpulse.dev') {
               in: 'query',
               required: false,
               schema: { type: 'string', enum: ['all', 'mine'], default: 'all' },
-              description: 'scope=mine restricts the feed to services in the authenticated caller\'s dependency manifest. Requires Authorization: Bearer <api_key> (401 otherwise).'
+              description: 'scope=mine restricts the feed to services in the authenticated caller\'s dependency manifest; for manifest entries that declare endpoints, only breaking changes on matching operations are included. Requires Authorization: Bearer <api_key> (401 otherwise).'
             }
           ],
           responses: {

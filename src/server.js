@@ -41,6 +41,7 @@ import { requestLogContext } from './engine/requestContext.js';
 import { scheduleTelemetryEvaluation } from './workers/telemetryLoop.js';
 import { formatCompactStatusPayload } from './engine/normalizer.js';
 import { evaluatePreflight } from './engine/diffEngine.js';
+import { parseEndpointEntry, changeMatchesEndpoints } from './engine/endpoints.js';
 import { buildPlaybook } from './engine/playbooks.js';
 import { handleMcpRequest } from './mcp/server.js';
 import { generateLlmsTxt, generateLlmsFullTxt } from './discovery/llms.js';
@@ -589,7 +590,7 @@ async function handleRequestInner(req, res, logCtx) {
 
       if (!Array.isArray(deps)) {
         return sendJson(res, 400, {
-          error: 'Missing required field: dependencies (array of { service, package?, version? })'
+          error: 'Missing required field: dependencies (array of { service, package?, version?, endpoints? })'
         });
       }
 
@@ -608,6 +609,15 @@ async function handleRequestInner(req, res, logCtx) {
           return sendJson(res, 400, {
             error: `Invalid version for service '${dep.service.trim().toLowerCase()}': must be a string.`
           });
+        }
+        if (dep.endpoints !== undefined && dep.endpoints !== null) {
+          const badEndpoints = !Array.isArray(dep.endpoints)
+            || dep.endpoints.some(e => parseEndpointEntry(e) === null);
+          if (badEndpoints) {
+            return sendJson(res, 400, {
+              error: `Invalid endpoints for service '${dep.service.trim().toLowerCase()}': must be an array of "METHOD /path" or "/path" strings.`
+            });
+          }
         }
         const slug = dep.service.trim().toLowerCase();
         if (!getService(slug)) {
@@ -853,9 +863,9 @@ async function handleRequestInner(req, res, logCtx) {
         }
         if (!consumeQuotaOrReject(res, agent)) return;
 
-        const manifestSlugs = new Set(getAgentDependencies(agent.id).map(d => d.service));
+        const manifestBySlug = new Map(getAgentDependencies(agent.id).map(d => [d.service, d.endpoints]));
         const changes = getBreakingChanges(service, since)
-          .filter(c => manifestSlugs.has(c.service_slug))
+          .filter(c => manifestBySlug.has(c.service_slug) && changeMatchesEndpoints(c, manifestBySlug.get(c.service_slug)))
           .map(c => ({ ...c, playbook_url: `${origin}/v1/changes/${c.id}/playbook` }));
         return sendJson(res, 200, {
           count: changes.length,

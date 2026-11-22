@@ -15,9 +15,10 @@
  *  - a `breaking_changes` DB row ({ id, service_slug, change_type,
  *    diff_summary, migration_hint, ... }) — the persisted form. Rows written
  *    by the Step 1 spec-diff worker carry change_type 'schema_diff' and a
- *    deterministic diff_summary; the fine-grained diff kind (removed
- *    operation, parameter now required, ...) is recovered by classifying
- *    that summary text.
+ *    deterministic diff_summary. Newer rows also carry the differ's
+ *    structured `kind` and `location` columns, which classification prefers;
+ *    legacy rows (NULL kind/location) fall back to classifying the summary
+ *    text with regexes.
  *  - a raw diff change object as returned by diffOpenApiSpecs
  *    ({ kind, location, summary, migration_hint }) — used when a playbook is
  *    wanted before/without persistence.
@@ -87,6 +88,16 @@ export function classifyBreakingChange(change) {
   if (!change || typeof change !== 'object') return { kind: 'breaking_change', details: {} };
 
   const summary = String(change.diff_summary || change.summary || '');
+
+  // Persisted row with structured columns (written since endpoint-level
+  // relevance landed): the stored kind is authoritative and the stored
+  // location supplies the operation; the summary regex still mines the
+  // richer details (names, types) when it matches.
+  if (change.kind && change.change_type) {
+    const m = RE[change.kind] ? summary.match(RE[change.kind]) : null;
+    const details = { ...parseLocation(change.location), ...(m ? matchDetails(change.kind, m) : {}) };
+    return { kind: change.kind, details };
+  }
 
   // Raw diff change: the kind is already known; still mine the summary for
   // details so steps/examples can be built the same way.

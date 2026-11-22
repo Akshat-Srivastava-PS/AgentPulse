@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import fs from 'node:fs';
 import { domainEvents } from '../engine/events.js';
+import { normalizeEndpoints, changeMatchesEndpoints } from '../engine/endpoints.js';
 import { getRequestLogContext } from '../engine/requestContext.js';
 import { PLANS, getPlan } from '../engine/plans.js';
 
@@ -60,6 +61,8 @@ function initSchema(db) {
       service_slug TEXT NOT NULL,
       version_or_date TEXT NOT NULL,
       change_type TEXT NOT NULL,
+      kind TEXT,
+      location TEXT,
       diff_summary TEXT NOT NULL,
       migration_hint TEXT NOT NULL,
       detected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -123,6 +126,7 @@ function initSchema(db) {
       service_slug TEXT NOT NULL,
       package_name TEXT,
       package_version TEXT,
+      endpoints TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (agent_id) REFERENCES agent_clients(id) ON DELETE CASCADE,
@@ -192,6 +196,12 @@ function initSchema(db) {
 
   addColumnIfMissing(db, 'agent_clients', 'stripe_customer_id', 'TEXT');
   addColumnIfMissing(db, 'agent_clients', 'stripe_subscription_id', 'TEXT');
+  // Endpoint-level relevance: structured diff kind/location on breaking
+  // changes (rows written before this stay NULL and keep legacy behaviour),
+  // and the optional declared-endpoints list (JSON) on manifest entries.
+  addColumnIfMissing(db, 'breaking_changes', 'kind', 'TEXT');
+  addColumnIfMissing(db, 'breaking_changes', 'location', 'TEXT');
+  addColumnIfMissing(db, 'agent_dependencies', 'endpoints', 'TEXT');
 
   // Seed the services catalog on first boot. The catalog is configuration
   // (the registry of tracked vendors) — no incidents, breaking changes, or
@@ -780,15 +790,15 @@ export function getBreakingChanges(serviceSlug = null, sinceTs = null) {
   return db.prepare(query).all(...params);
 }
 
-export function createBreakingChange({ id, service_slug, version_or_date, change_type, diff_summary, migration_hint }) {
+export function createBreakingChange({ id, service_slug, version_or_date, change_type, diff_summary, migration_hint, kind = null, location = null }) {
   const db = getDb();
   const bcId = id || `bc_${Date.now().toString(36)}`;
   const now = new Date().toISOString();
 
   db.prepare(`
-    INSERT INTO breaking_changes (id, service_slug, version_or_date, change_type, diff_summary, migration_hint, detected_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(bcId, service_slug, version_or_date, change_type, diff_summary, migration_hint, now);
+    INSERT INTO breaking_changes (id, service_slug, version_or_date, change_type, kind, location, diff_summary, migration_hint, detected_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(bcId, service_slug, version_or_date, change_type, kind, location, diff_summary, migration_hint, now);
 
   const change = db.prepare('SELECT * FROM breaking_changes WHERE id = ?').get(bcId);
   // Step 4: domain event for webhook dispatch (see src/engine/events.js).
@@ -1017,10 +1027,12 @@ export function saveSpecSnapshot({ service_slug, spec_url, spec_hash, spec_json 
 
 function formatDependency(row) {
   if (!row) return null;
+  const endpoints = parseJsonArray(row.endpoints);
   return {
     service: row.service_slug,
     package: row.package_name || null,
     version: row.package_version || null,
+    endpoints: endpoints && endpoints.length > 0 ? endpoints : null,
     created_at: row.created_at,
     updated_at: row.updated_at
   };
@@ -1048,10 +1060,12 @@ export function setAgentDependencies(agentId, dependencies = []) {
     if (!slug) continue;
     const pkg = dep.package ?? dep.package_name ?? null;
     const ver = dep.version ?? dep.package_version ?? null;
+    const endpoints = normalizeEndpoints(dep.endpoints);
     bySlug.set(slug, {
       service_slug: slug,
       package_name: pkg !== null && pkg !== undefined && String(pkg).trim() !== '' ? String(pkg).trim() : null,
-      package_version: ver !== null && ver !== undefined && String(ver).trim() !== '' ? String(ver).trim() : null
+      package_version: ver !== null && ver !== undefined && String(ver).trim() !== '' ? String(ver).trim() : null,
+      endpoints: endpoints && endpoints.length > 0 ? endpoints : null
     });
   }
 
@@ -1059,8 +1073,8 @@ export function setAgentDependencies(agentId, dependencies = []) {
   try {
     db.prepare('DELETE FROM agent_dependencies WHERE agent_id = ?').run(agentId);
     const insert = db.prepare(`
-      INSERT INTO agent_dependencies (id, agent_id, service_slug, package_name, package_version, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO agent_dependencies (id, agent_id, service_slug, package_name, package_version, endpoints, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
     for (const dep of bySlug.values()) {
       insert.run(
@@ -1069,6 +1083,7 @@ export function setAgentDependencies(agentId, dependencies = []) {
         dep.service_slug,
         dep.package_name,
         dep.package_version,
+        dep.endpoints ? JSON.stringify(dep.endpoints) : null,
         now,
         now
       );
@@ -1171,7 +1186,7 @@ export function deleteAgentWebhook(agentId, id) {
  * filter matches `serviceSlug` (null/empty filter = all services). Returns
  * raw rows (with secrets) for the dispatcher.
  */
-export function getMatchingWebhooks(eventType, serviceSlug) {
+export function getMatchingWebhooks(eventType, serviceSlug, change = null) {
   const db = getDb();
   const rows = db.prepare('SELECT * FROM agent_webhooks WHERE active = 1').all();
   return rows.filter(row => {
@@ -1179,6 +1194,18 @@ export function getMatchingWebhooks(eventType, serviceSlug) {
     if (!events.includes(eventType)) return false;
     const services = parseJsonArray(row.services);
     if (services && services.length > 0 && !services.includes(serviceSlug)) return false;
+    // Endpoint-level relevance: for change.detected, when the webhook's
+    // owner declared endpoints for this service in their dependency
+    // manifest, only changes on matching operations are delivered.
+    // Owners without a manifest entry (or without endpoints on it) keep
+    // the service-level behaviour above.
+    if (eventType === 'change.detected' && change) {
+      const dep = db.prepare(
+        'SELECT endpoints FROM agent_dependencies WHERE agent_id = ? AND service_slug = ?'
+      ).get(row.agent_id, serviceSlug);
+      const endpoints = dep ? parseJsonArray(dep.endpoints) : null;
+      if (endpoints && endpoints.length > 0 && !changeMatchesEndpoints(change, endpoints)) return false;
+    }
     return true;
   });
 }

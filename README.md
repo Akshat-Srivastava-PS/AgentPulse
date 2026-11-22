@@ -109,13 +109,13 @@ Raw vendor data is normalized into one model: services, incidents (severity `min
 
 ### 3. Identity, manifests, and impact
 
-Any agent can **register** with one POST — no CAPTCHA, no card — and receives an API key (`agp_live_...`). A registered agent can store a **dependency manifest**: the services its stack uses, with optional package/version pins.
+Any agent can **register** with one POST — no CAPTCHA, no card — and receives an API key (`agp_live_...`). A registered agent can store a **dependency manifest**: the services its stack uses, with optional package/version pins and an optional `endpoints` list — the operations it actually calls on a service, as `"METHOD /path"` or `"/path"` strings (a declared path also covers its subpaths).
 
 With a manifest in place, AgentPulse answers the question status pages can't:
 
-> **Affected** = a service in your manifest has an **active incident**, or a **breaking change detected within the last 90 days**.
+> **Affected** = a service in your manifest has an **active incident**, or a **breaking change detected within the last 90 days** — on one of your declared endpoints, when that entry declares endpoints.
 
-That verdict appears in preflight responses, in the `scope=mine` changes feed, and in the MCP `get_my_impact` tool. *(Honest scope note: impact is computed at **service level**. Package/version pins are stored and echoed, but not yet matched against per-version change data.)*
+That verdict appears in preflight responses, in the `scope=mine` changes feed, and in the MCP `get_my_impact` tool; `change.detected` webhook deliveries are narrowed the same way. Entries without endpoints keep service-level relevance, and breaking changes recorded before structured locations existed (location `NULL`) always count — history is never filtered away. *(Honest scope note: package/version pins are stored and echoed, but not yet matched against per-version change data.)*
 
 ### 4. Migration playbooks — from "it broke" to "here's the fix"
 
@@ -165,7 +165,7 @@ How it works:
 
 ### 7. Webhooks — push alerts
 
-Subscribe a URL once; AgentPulse POSTs signed events as they happen: `incident.created`, `incident.resolved`, `change.detected`. Filters: an explicit `services` list wins; no list means all services (the filter is deliberately *not* intersected with your manifest — set it to your manifest's services if that's what you want). Payloads are HMAC-SHA256 signed (`X-AgentPulse-Signature`), delivered with a 5-second timeout and up to 3 attempts with backoff, and every attempt is recorded in a delivery log you can inspect. URLs must be `https://` (plain `http://` only for localhost, for development). The signing secret is shown **once**, in the create response.
+Subscribe a URL once; AgentPulse POSTs signed events as they happen: `incident.created`, `incident.resolved`, `change.detected`. Filters: an explicit `services` list wins; no list means all services (the services filter is deliberately *not* intersected with your manifest — set it to your manifest's services if that's what you want). One manifest interaction does apply: for `change.detected`, if your manifest entry for that service declares `endpoints`, only changes on matching operations are delivered. Payloads are HMAC-SHA256 signed (`X-AgentPulse-Signature`), delivered with a 5-second timeout and up to 3 attempts with backoff, and every attempt is recorded in a delivery log you can inspect. URLs must be `https://` (plain `http://` only for localhost, for development). The signing secret is shown **once**, in the create response.
 
 ---
 

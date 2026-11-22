@@ -11,7 +11,11 @@
  *
  * For each event, every active webhook whose event filter includes the type
  * and whose service filter matches (null/empty filter = all services) gets
- * one delivery row in webhook_deliveries and an async POST:
+ * one delivery row in webhook_deliveries and an async POST. For
+ * change.detected, delivery is additionally narrowed by the webhook owner's
+ * dependency manifest: when the owner declared endpoints for the service,
+ * only changes on matching operations are delivered (see
+ * src/engine/endpoints.js for the matching rule).
  *
  *   Body (raw JSON, signed as-is):
  *     { "id": <delivery id>, "type": <event type>,
@@ -143,7 +147,7 @@ async function attemptDelivery(webhook, deliveryId, eventType, rawBody) {
 export function dispatchWebhookEvent(eventType, data) {
   try {
     if (!data || !data.service_slug) return;
-    const webhooks = getMatchingWebhooks(eventType, data.service_slug);
+    const webhooks = getMatchingWebhooks(eventType, data.service_slug, eventType === 'change.detected' ? data : null);
     for (const webhook of webhooks) {
       const delivery = createWebhookDelivery({ webhook_id: webhook.id, event_type: eventType, payload: '' });
       const rawBody = JSON.stringify({
