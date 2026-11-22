@@ -848,6 +848,15 @@ async function handleRequestInner(req, res, logCtx) {
       });
     }
 
+    // Owner plan catalog: the /admin page renders its Plans section and
+    // per-agent plan controls from this — the catalog itself stays in
+    // src/engine/plans.js and is never hardcoded in the page.
+    if (pathname === '/v1/admin/plans' && method === 'GET') {
+      const auth = checkAdminAuth(req);
+      if (!auth.ok) return sendJson(res, auth.status, auth.body);
+      return sendJson(res, 200, { plans: listPlans() });
+    }
+
     if (pathname === '/admin' && method === 'GET') {
       const adminPath = path.join(PUBLIC_DIR, 'admin.html');
       if (fs.existsSync(adminPath)) {

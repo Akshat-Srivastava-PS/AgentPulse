@@ -256,17 +256,18 @@ curl -X POST http://localhost:3000/v1/preflight \
 
 The owner can see **which agents are using the service and how many requests each one makes**. Every `/v1/*` request (except the admin endpoints themselves) and every MCP `tools/call` is written to a `request_log` table — identified calls with the agent's id and name, anonymous/public reads with a null agent — with a `counted` flag set at the exact place quota is consumed, so the log and the quota counter never disagree. Rows older than 7 days are pruned opportunistically.
 
-Two owner-only endpoints expose it:
+Owner-only endpoints expose it:
 
 | Endpoint | Returns |
 | :--- | :--- |
 | `GET /v1/admin/agents` | Fleet totals (agents, requests today, requests in the last 24h, counted requests today) plus one row per agent: requests today, quota remaining, Good Citizen score, lifetime logged requests, last-seen time, and its top 3 endpoints. |
 | `GET /v1/admin/requests?limit=50` | The most recent request-log rows (limit clamped to 1–200). |
+| `GET /v1/admin/plans` | The plan catalog from `src/engine/plans.js` — every tier with its daily quota and monthly price. The `/admin` page renders its Plans section and per-agent plan controls from this; the catalog is never hardcoded in the page. |
 | `PATCH /v1/admin/agents/{id}` | Grant a plan: body `{ "tier": "pro" }` sets the agent's tier and daily quota from the plan catalog (`free_verified` / `pro` / `team`). Unknown tier → 400; unknown agent → 404. This is how paid plans are activated until a payment provider is connected. |
 
-There is also a human page at **`GET /admin`**: paste the admin token (kept only in the tab's session storage) and it renders the totals, the per-agent table, and a recent-requests feed, auto-refreshing every 30 seconds.
+There is also a human page at **`GET /admin`**: paste the admin token (kept only in the tab's session storage) and it renders the totals, a **Plans** section (the full catalog with daily quotas and prices), the per-agent table, and a recent-requests feed, auto-refreshing every 30 seconds. Each agent row shows its current plan with a Free / Pro / Team select and an Apply button, so the owner can grant or change a plan in the page itself — Apply calls the `PATCH` endpoint above, and an un-applied selection survives the auto-refresh.
 
-Access is controlled by the **`ADMIN_TOKEN`** environment variable: send it as `Authorization: Bearer <ADMIN_TOKEN>`. When `ADMIN_TOKEN` is unset or empty, both endpoints return `503 { "error": "admin_disabled" }` — the admin surface is off by default, and it is never advertised in `llms.txt` or the OpenAPI document agents read.
+Access is controlled by the **`ADMIN_TOKEN`** environment variable: send it as `Authorization: Bearer <ADMIN_TOKEN>`. When `ADMIN_TOKEN` is unset or empty, the admin endpoints return `503 { "error": "admin_disabled" }` — the admin surface is off by default, and it is never advertised in `llms.txt` or the OpenAPI document agents read.
 
 ### Configuration
 

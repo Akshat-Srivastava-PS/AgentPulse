@@ -214,3 +214,64 @@ test('57. Plan: admin PATCH follows the same ADMIN_TOKEN auth as the other admin
   assert.strictEqual(plan.tier, 'free_verified');
   assert.strictEqual(plan.daily_quota, 100);
 });
+
+test('58. Plan: GET /v1/admin/plans returns the catalog and enforces admin auth', async () => {
+  // Unset token: admin surface disabled entirely
+  const saved = process.env.ADMIN_TOKEN;
+  delete process.env.ADMIN_TOKEN;
+  try {
+    const disabled = await dispatchRequest({ url: '/v1/admin/plans' });
+    assert.strictEqual(disabled.status, 503);
+    assert.strictEqual((await disabled.json()).error, 'admin_disabled');
+
+    const withToken = await dispatchRequest({
+      url: '/v1/admin/plans',
+      headers: adminHeaders('anything')
+    });
+    assert.strictEqual(withToken.status, 503);
+  } finally {
+    if (saved !== undefined) process.env.ADMIN_TOKEN = saved;
+  }
+
+  process.env.ADMIN_TOKEN = ADMIN_TOKEN;
+
+  const noToken = await dispatchRequest({ url: '/v1/admin/plans' });
+  assert.strictEqual(noToken.status, 401);
+
+  const wrongToken = await dispatchRequest({
+    url: '/v1/admin/plans',
+    headers: adminHeaders('not-the-admin-token')
+  });
+  assert.strictEqual(wrongToken.status, 401);
+  assert.strictEqual((await wrongToken.json()).error, 'unauthorized');
+
+  const ok = await dispatchRequest({
+    url: '/v1/admin/plans',
+    headers: adminHeaders()
+  });
+  assert.strictEqual(ok.status, 200);
+  const body = await ok.json();
+  assert.ok(Array.isArray(body.plans));
+  assert.strictEqual(body.plans.length, 3);
+  // Catalog order is free → pro → team
+  assert.deepStrictEqual(body.plans.map(p => p.tier), ['free_verified', 'pro', 'team']);
+  const byTier = Object.fromEntries(body.plans.map(p => [p.tier, p]));
+  assert.strictEqual(byTier.free_verified.name, 'Free');
+  assert.strictEqual(byTier.free_verified.daily_quota, 100);
+  assert.strictEqual(byTier.free_verified.price_usd_month, 0);
+  assert.strictEqual(byTier.pro.name, 'Pro');
+  assert.strictEqual(byTier.pro.daily_quota, 10000);
+  assert.strictEqual(byTier.pro.price_usd_month, 29);
+  assert.strictEqual(byTier.team.name, 'Team');
+  assert.strictEqual(byTier.team.daily_quota, 50000);
+  assert.strictEqual(byTier.team.price_usd_month, 99);
+
+  // The owner page renders its Plans section and per-agent plan controls
+  // from this endpoint (catalog is not hardcoded in the page)
+  const page = await dispatchRequest({ url: '/admin' });
+  assert.strictEqual(page.status, 200);
+  const html = await page.text();
+  assert.ok(html.includes('/v1/admin/plans'), 'admin page fetches the plan catalog');
+  assert.ok(html.includes('plan-select'), 'admin page renders per-agent plan selects');
+  assert.ok(html.includes('plan-apply'), 'admin page renders per-agent Apply buttons');
+});

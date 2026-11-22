@@ -25,6 +25,15 @@
     .admin-feed .uncounted { color: var(--text-muted, #6b7280); }
     .top-eps { color: var(--text-secondary, #9aa4b2); font-size: 0.78rem; }
     .admin-meta { color: var(--text-muted, #6b7280); font-size: 0.78rem; margin-top: 8px; }
+    .plan-current { font-weight: 600; margin-bottom: 6px; }
+    .plan-controls { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+    .plan-select { background: rgba(10, 13, 20, 0.85); border: 1px solid var(--border-subtle, #2a2f3a); border-radius: 8px; padding: 6px 8px; color: #fff; font-size: 0.82rem; cursor: pointer; }
+    .plan-select:focus { outline: none; border-color: var(--accent-indigo, #6366f1); }
+    .btn-small { padding: 6px 12px; font-size: 0.78rem; }
+    .btn-small:disabled { opacity: 0.5; cursor: default; }
+    .plan-status { font-size: 0.78rem; margin-top: 6px; }
+    .plan-status.ok { color: var(--accent-emerald, #34d399); }
+    .plan-status.error { color: var(--accent-rose, #fb7185); }
   </style>
 </head>
 <body>
@@ -76,6 +85,25 @@
         </div>
       </section>
 
+      <section id="plans-section" class="section-panel" hidden>
+        <div class="panel-header">
+          <h3><span>💳</span> Plans</h3>
+        </div>
+        <div style="overflow-x:auto;">
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>Plan</th>
+                <th>Daily quota</th>
+                <th>Price</th>
+              </tr>
+            </thead>
+            <tbody id="plans-body"></tbody>
+          </table>
+        </div>
+        <div class="admin-meta">There is no self-serve checkout yet — grant a paid plan to an agent from the Plan column in the Agents table below after purchase.</div>
+      </section>
+
       <section id="agents-section" class="section-panel" hidden>
         <div class="panel-header">
           <h3><span>🤖</span> Agents</h3>
@@ -85,6 +113,7 @@
             <thead>
               <tr>
                 <th>Agent</th>
+                <th>Plan</th>
                 <th>Requests today</th>
                 <th>Total requests</th>
                 <th>Quota left</th>
@@ -114,6 +143,37 @@
       var form = document.getElementById('token-form');
       var input = document.getElementById('token-input');
       var message = document.getElementById('message');
+      var agentsBody = document.getElementById('agents-body');
+
+      // Plan state. The catalog comes from GET /v1/admin/plans (never
+      // hardcoded here). pendingPlans preserves an owner's un-applied
+      // selection across the 30s auto-refresh re-renders; rowStatus keeps
+      // the per-row success/failure note visible across the same renders.
+      var plansCatalog = [];
+      var pendingPlans = {};
+      var rowStatus = {};
+      var planInteracting = false;
+
+      function planName(tier) {
+        for (var i = 0; i < plansCatalog.length; i++) {
+          if (plansCatalog[i].tier === tier) return plansCatalog[i].name;
+        }
+        return tier;
+      }
+
+      function setRowStatus(agentId, text, kind) {
+        if (text) {
+          rowStatus[agentId] = { text: text, kind: kind || 'ok' };
+        } else {
+          delete rowStatus[agentId];
+        }
+        var node = agentsBody.querySelector('[data-status-for="' + agentId + '"]');
+        if (node) {
+          node.textContent = text || '';
+          node.className = 'plan-status ' + (kind || 'ok');
+          node.hidden = !text;
+        }
+      }
 
       function esc(value) {
         return String(value == null ? '' : value)
@@ -132,8 +192,23 @@
 
       function hideData() {
         document.getElementById('totals-section').hidden = true;
+        document.getElementById('plans-section').hidden = true;
         document.getElementById('agents-section').hidden = true;
         document.getElementById('feed-section').hidden = true;
+      }
+
+      function renderPlans(plans) {
+        plansCatalog = plans || [];
+        var body = document.getElementById('plans-body');
+        body.innerHTML = plansCatalog.map(function (p) {
+          var price = p.price_usd_month === 0 ? 'Free' : '$' + p.price_usd_month + ' / month';
+          return '<tr>' +
+            '<td><strong>' + esc(p.name) + '</strong></td>' +
+            '<td class="num">' + Number(p.daily_quota).toLocaleString('en-US') + ' requests/day</td>' +
+            '<td class="num">' + esc(price) + '</td>' +
+            '</tr>';
+        }).join('');
+        document.getElementById('plans-section').hidden = false;
       }
 
       function getToken() {
@@ -146,16 +221,36 @@
         document.getElementById('total-requests-24h').textContent = data.totals.requests_24h;
         document.getElementById('total-counted-today').textContent = data.totals.counted_today;
 
-        var body = document.getElementById('agents-body');
+        var body = agentsBody;
         if (!data.agents.length) {
-          body.innerHTML = '<tr><td colspan="7">No agents registered yet.</td></tr>';
+          body.innerHTML = '<tr><td colspan="8">No agents registered yet.</td></tr>';
         } else {
           body.innerHTML = data.agents.map(function (a) {
             var tops = (a.top_endpoints || []).map(function (t) {
               return esc(t.path) + ' × ' + t.count;
             }).join('<br>');
+            var currentTier = a.tier || 'free_verified';
+            var selectedTier = pendingPlans[a.id] || currentTier;
+            var options = plansCatalog.map(function (p) {
+              return '<option value="' + esc(p.tier) + '"' +
+                (p.tier === selectedTier ? ' selected' : '') + '>' + esc(p.name) + '</option>';
+            }).join('');
+            if (!options) {
+              options = '<option value="' + esc(selectedTier) + '" selected>' + esc(planName(selectedTier)) + '</option>';
+            }
+            var status = rowStatus[a.id];
+            var planCell = '<td>' +
+              '<div class="plan-current">' + esc(planName(currentTier)) + '</div>' +
+              '<div class="plan-controls">' +
+              '<select class="plan-select" data-agent-id="' + esc(a.id) + '" aria-label="Plan for ' + esc(a.agent_name) + '">' + options + '</select>' +
+              '<button type="button" class="btn-secondary btn-small plan-apply" data-agent-id="' + esc(a.id) + '">Apply</button>' +
+              '</div>' +
+              '<div class="plan-status ' + (status ? esc(status.kind) : 'ok') + '" data-status-for="' + esc(a.id) + '"' +
+              (status ? '' : ' hidden') + '>' + (status ? esc(status.text) : '') + '</div>' +
+              '</td>';
             return '<tr>' +
               '<td><strong>' + esc(a.agent_name) + '</strong><br><span class="top-eps">' + esc(a.operator_url) + '</span></td>' +
+              planCell +
               '<td class="num">' + a.requests_today + ' / ' + a.daily_quota + '</td>' +
               '<td class="num">' + a.total_requests + '</td>' +
               '<td class="num">' + a.quota_remaining + '</td>' +
@@ -190,11 +285,77 @@
         document.getElementById('feed-section').hidden = false;
       }
 
+      function applyPlan(agentId) {
+        var token = getToken();
+        if (!token) return;
+        var sel = agentsBody.querySelector('.plan-select[data-agent-id="' + agentId + '"]');
+        var tier = pendingPlans[agentId] || (sel ? sel.value : null);
+        if (!tier) return;
+        var btn = agentsBody.querySelector('.plan-apply[data-agent-id="' + agentId + '"]');
+        if (btn) btn.disabled = true;
+        fetch('/v1/admin/agents/' + encodeURIComponent(agentId), {
+          method: 'PATCH',
+          headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tier: tier })
+        }).then(function (res) {
+          return res.json().catch(function () { return null; }).then(function (data) {
+            return { status: res.status, data: data };
+          });
+        }).then(function (result) {
+          if (result.status === 200) {
+            delete pendingPlans[agentId];
+            setRowStatus(agentId, 'Plan updated to ' + planName(tier) + '.', 'ok');
+          } else {
+            setRowStatus(agentId, 'Failed: ' + ((result.data && result.data.error) || ('HTTP ' + result.status)), 'error');
+          }
+          load();
+        }).catch(function () {
+          setRowStatus(agentId, 'Failed: could not reach the admin API.', 'error');
+          var btnNow = agentsBody.querySelector('.plan-apply[data-agent-id="' + agentId + '"]');
+          if (btnNow) btnNow.disabled = false;
+        });
+      }
+
+      // Plan controls use event delegation on the table body, which is
+      // re-rendered on every refresh. Changing a select only records the
+      // pending choice; Apply performs the PATCH.
+      agentsBody.addEventListener('change', function (event) {
+        if (!event.target.classList || !event.target.classList.contains('plan-select')) return;
+        var agentId = event.target.getAttribute('data-agent-id');
+        pendingPlans[agentId] = event.target.value;
+        setRowStatus(agentId, '', 'ok');
+      });
+
+      agentsBody.addEventListener('click', function (event) {
+        if (!event.target.classList || !event.target.classList.contains('plan-apply')) return;
+        applyPlan(event.target.getAttribute('data-agent-id'));
+      });
+
+      // While a plan select has focus (its dropdown is open), pause the
+      // auto-refresh so a re-render cannot close it mid-change.
+      agentsBody.addEventListener('focusin', function (event) {
+        if (event.target.classList && event.target.classList.contains('plan-select')) planInteracting = true;
+      });
+      agentsBody.addEventListener('focusout', function (event) {
+        if (event.target.classList && event.target.classList.contains('plan-select')) planInteracting = false;
+      });
+
       function load() {
         var token = getToken();
         if (!token) return;
         var headers = { 'Authorization': 'Bearer ' + token };
 
+        // Plans first, so the agents table can label tiers and build its
+        // plan selects from the live catalog.
+        fetch('/v1/admin/plans', { headers: headers }).then(function (res) {
+          return res.ok ? res.json() : null;
+        }).then(function (data) {
+          if (data && data.plans) renderPlans(data.plans);
+        }).catch(function () { /* plans section is best-effort */ })
+        .then(function () { loadUsage(headers); });
+      }
+
+      function loadUsage(headers) {
         fetch('/v1/admin/agents', { headers: headers }).then(function (res) {
           if (res.status === 503) {
             hideData();
@@ -248,8 +409,10 @@
       }
 
       // Auto-refresh every 30s while the page is open with a token set.
+      // Paused while a plan select is focused, and pending (un-applied)
+      // plan selections survive re-renders via the pendingPlans map.
       setInterval(function () {
-        if (getToken() && !document.hidden) load();
+        if (getToken() && !document.hidden && !planInteracting) load();
       }, 30000);
     })();
   </script>
