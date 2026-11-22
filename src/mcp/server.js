@@ -277,7 +277,7 @@ export async function executeMcpTool(name, args = {}, context = {}) {
             text: JSON.stringify({
               status: 'recorded',
               signal_id: recorded.id,
-              message: 'Outage signal logged. Normalizer engine updated.'
+              message: 'Outage signal recorded.'
             }, null, 2)
           }
         ]

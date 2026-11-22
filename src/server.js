@@ -924,7 +924,7 @@ async function handleRequestInner(req, res, logCtx) {
       });
 
       return sendJson(res, 202, {
-        message: 'Signal accepted into anomaly detection pipeline',
+        message: 'Outage signal recorded',
         signal: record
       }, rateLimitHeadersFor(agent));
     }

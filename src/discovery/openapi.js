@@ -683,7 +683,7 @@ export function generateOpenApiSchema(origin = 'https://agentpulse.dev') {
             }
           },
           responses: {
-            '202': { description: 'Signal accepted into the anomaly detection pipeline', headers: RATE_LIMIT_HEADERS },
+            '202': { description: 'Outage signal recorded', headers: RATE_LIMIT_HEADERS },
             '400': { description: 'Missing service, endpoint, or error_code' },
             '401': { description: 'Missing or invalid API key' },
             '429': RATE_LIMITED_RESPONSE
