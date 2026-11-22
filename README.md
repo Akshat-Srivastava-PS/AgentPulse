@@ -171,7 +171,7 @@ Subscribe a URL once; AgentPulse POSTs signed events as they happen: `incident.c
 | Probes | `POST /v1/synthetic/probe` | Trigger one synthetic health probe (auth required). |
 | Stream | `GET /v1/stream` | Server-Sent Events: live incident/change events. |
 | MCP | `POST /mcp` | Stateless HTTP MCP server — tools below. |
-| SDK | `sdk/` (`agentpulse-sdk`) | Zero-dependency JavaScript client. |
+| SDK | `sdk/` (`@sriakshat/agentpulse`) | Zero-dependency JavaScript client. |
 
 **MCP tools:** `check_dependency_health` (batch status), `get_service_status` (single service), `lookup_breaking_changes` (recent changes for a service), `get_my_impact` (manifest-wide affected verdicts), `report_outage_signal` (crowdsourced telemetry; identified caller required). Identity is read from the `Authorization: Bearer <api key>` header (an `api_key` tool argument is accepted as a fallback).
 
@@ -200,7 +200,7 @@ claude mcp add agentpulse https://agentpulse-43di.onrender.com/mcp \
 ### JavaScript SDK
 
 ```js
-import { AgentPulseClient, AgentPulseError } from 'agentpulse-sdk';
+import { AgentPulseClient, AgentPulseError } from '@sriakshat/agentpulse';
 
 const client = new AgentPulseClient({
   baseUrl: 'https://agentpulse-43di.onrender.com',
@@ -312,7 +312,7 @@ src/
   engine/            diff engine, severity/hints, playbooks, event bus
   workers/           statuspage poller, spec-diff, webhook dispatcher, probes
   discovery/         llms.txt + OpenAPI generators
-sdk/                 agentpulse-sdk (zero-dependency JS client)
+sdk/                 @sriakshat/agentpulse (zero-dependency JS client)
 tests/               node:test suites (49 tests)
 Dockerfile           node:22-alpine, non-root, healthcheck on /v1/metrics
 ```

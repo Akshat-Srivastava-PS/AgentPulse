@@ -1,1 +1,21 @@
-{"description":"Thin zero-dependency JavaScript client for the AgentPulse API & cloud status / breaking-change oracle.","engines":{"node":">=18"},"exports":{".":"./index.js"},"keywords":["agentpulse","status","breaking-changes","ai-agents","mcp-alternative"],"license":"MIT","main":"index.js","name":"agentpulse-sdk","type":"module","version":"0.1.0"}
+{
+  "description": "Thin zero-dependency JavaScript client for the AgentPulse API & cloud status / breaking-change oracle.",
+  "engines": {
+    "node": ">=18"
+  },
+  "exports": {
+    ".": "./index.js"
+  },
+  "keywords": [
+    "agentpulse",
+    "status",
+    "breaking-changes",
+    "ai-agents",
+    "mcp-alternative"
+  ],
+  "license": "MIT",
+  "main": "index.js",
+  "name": "@sriakshat/agentpulse",
+  "type": "module",
+  "version": "0.1.0"
+}

@@ -1,5 +1,5 @@
 /**
- * agentpulse-sdk — a thin, zero-dependency JavaScript client for AgentPulse.
+ * agentpulse — a thin, zero-dependency JavaScript client for AgentPulse.
  *
  * Uses only the global `fetch` (Node 18+ / modern browsers / edge runtimes).
  * Every method is a thin wrapper over the public REST API, plus one MCP
@@ -9,7 +9,7 @@
  * for agents and scripts that just want functions.
  *
  * Usage:
- *   import { AgentPulseClient, AgentPulseError } from 'agentpulse-sdk';
+ *   import { AgentPulseClient, AgentPulseError } from 'agentpulse';
  *   const client = new AgentPulseClient({ baseUrl: 'https://agentpulse.dev', apiKey: 'agp_live_...' });
  *   const status = await client.getStatus('stripe');
  */

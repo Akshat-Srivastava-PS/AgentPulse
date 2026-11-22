@@ -1,4 +1,4 @@
-# agentpulse-sdk
+# agentpulse
 
 A thin, **zero-dependency** JavaScript client for [AgentPulse](../README.md) — the live API & cloud status / breaking-change oracle for AI agents. It uses only the global `fetch` (Node 18+, modern browsers, edge runtimes) and wraps the REST API in plain functions, including the Good Citizen ETag/304 caching protocol.
 
@@ -7,7 +7,7 @@ A thin, **zero-dependency** JavaScript client for [AgentPulse](../README.md) —
 ## Install
 
 ```bash
-npm install agentpulse-sdk
+npm install @sriakshat/agentpulse
 ```
 
 Or straight from this repo (no build step, ESM):
@@ -19,7 +19,7 @@ import { AgentPulseClient } from './sdk/index.js';
 ## Quickstart
 
 ```js
-import { AgentPulseClient, AgentPulseError } from 'agentpulse-sdk';
+import { AgentPulseClient, AgentPulseError } from '@sriakshat/agentpulse';
 
 const client = new AgentPulseClient({
   baseUrl: 'https://agentpulse.dev',
